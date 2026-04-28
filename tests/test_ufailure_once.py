@@ -169,3 +169,24 @@ def test_remove_skill_deletes_only_when_confirmed(tmp_path):
     confirmed_paths = remove_skill("rare", confirm=True, home=tmp_path)
     assert confirmed_paths == [target]
     assert not target.exists()
+
+
+def test_collect_usage_handles_naive_timestamp(tmp_path):
+    write_jsonl(
+        tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00",
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "Skill", "input": {"skill": "foo"}},
+                    ],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"foo"}, since_days=90)
+
+    assert result["foo"].uses == 1
