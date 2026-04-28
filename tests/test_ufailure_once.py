@@ -134,3 +134,35 @@ def test_build_report_rows_sorts_and_marks_low_use_candidates():
     assert rows[0]["candidate"] is False
     assert rows[1]["candidate"] is True
     assert rows[2]["candidate"] is True
+
+
+from ufailure_once import find_removable_skill_paths, remove_skill
+
+
+def test_find_removable_skill_paths_only_allows_user_skill_roots(tmp_path):
+    codex_root = tmp_path / ".codex" / "skills"
+    allowed = codex_root / "rare"
+    allowed.mkdir(parents=True)
+    (allowed / "SKILL.md").write_text("# Rare\n", encoding="utf-8")
+
+    paths = find_removable_skill_paths("rare", home=tmp_path)
+
+    assert paths == [allowed]
+
+
+def test_find_removable_skill_paths_rejects_missing_skill(tmp_path):
+    assert find_removable_skill_paths("missing", home=tmp_path) == []
+
+
+def test_remove_skill_deletes_only_when_confirmed(tmp_path):
+    target = tmp_path / ".codex" / "skills" / "rare"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# Rare\n", encoding="utf-8")
+
+    dry_run_paths = remove_skill("rare", confirm=False, home=tmp_path)
+    assert dry_run_paths == [target]
+    assert target.exists()
+
+    confirmed_paths = remove_skill("rare", confirm=True, home=tmp_path)
+    assert confirmed_paths == [target]
+    assert not target.exists()

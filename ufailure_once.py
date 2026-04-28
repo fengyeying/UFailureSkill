@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -237,6 +238,46 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
         print("  要移除哪些？回复编号(如 1,2 或 all),或 skip 跳过。")
 
 
+def user_skill_roots(home: Path | None = None) -> list[Path]:
+    base = home or Path.home()
+    return [
+        base / ".codex" / "skills",
+        base / ".claude" / "skills",
+    ]
+
+
+def is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def find_removable_skill_paths(skill: str, home: Path | None = None) -> list[Path]:
+    paths: list[Path] = []
+    for root in user_skill_roots(home):
+        candidate = root / skill
+        if not candidate.exists():
+            continue
+        if skill.startswith("."):
+            continue
+        if not is_relative_to(candidate, root):
+            continue
+        if not (candidate / "SKILL.md").exists():
+            continue
+        paths.append(candidate)
+    return paths
+
+
+def remove_skill(skill: str, confirm: bool, home: Path | None = None) -> list[Path]:
+    paths = find_removable_skill_paths(skill, home)
+    if confirm:
+        for path in paths:
+            shutil.rmtree(path)
+    return paths
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ufailure_once.py")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -269,7 +310,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "remove":
-        parser.error("remove is not implemented yet")
+        if args.dry_run == args.confirm:
+            parser.error("choose exactly one of --dry-run or --confirm")
+        paths = remove_skill(args.skill, confirm=args.confirm, home=None)
+        if not paths:
+            print(f"  ✗ {args.skill}: no removable user skill found")
+            return 1
+        glyph = "✓" if args.confirm else "·"
+        action = "Removed" if args.confirm else "Would remove"
+        for path in paths:
+            print(f"  {glyph} {action}: {path}")
+        return 0
 
     return 0
 
