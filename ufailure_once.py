@@ -163,9 +163,14 @@ def parse_days(value: str) -> int:
     return int(value)
 
 
-def build_report_rows(usage: dict[str, Usage], candidate_threshold: int) -> list[dict[str, object]]:
+def build_report_rows(
+    usage: dict[str, Usage],
+    candidate_threshold: int,
+    paths_by_skill: dict[str, list[Path]] | None = None,
+) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     total_uses = sum(entry.uses for entry in usage.values())
+    paths_by_skill = paths_by_skill or {}
     for entry in usage.values():
         percent = (entry.uses / total_uses * 100) if total_uses else 0.0
         rows.append(
@@ -175,6 +180,7 @@ def build_report_rows(usage: dict[str, Usage], candidate_threshold: int) -> list
                 "percent": round(percent, 1),
                 "last_used": entry.last_used.isoformat() if entry.last_used else None,
                 "candidate": entry.uses <= candidate_threshold,
+                "paths": len(paths_by_skill.get(entry.skill, [])),
             }
         )
     return sorted(rows, key=lambda row: (-int(row["uses"]), str(row["skill"])))
@@ -236,7 +242,9 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
             last = render_relative(row["last_used"], now)
             prefix = f"[{index}]"
             name = str(row["skill"])[:23]
-            print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
+            paths_count = int(row.get("paths", 0))
+            suffix = f"  ⚠ {paths_count} paths" if paths_count > 1 else ""
+            print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}{suffix}")
     print("  " + RULE * 76)
     print(f"  Total {len(rows)} · Active {len(actives)} · Failure Skills {len(candidates)}")
     if candidates:
@@ -308,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
         since_days = parse_days(args.since)
         skills = discover_user_skills()
         usage = collect_usage(home=None, known_skills=set(skills), since_days=since_days)
-        rows = build_report_rows(usage, candidate_threshold=1)
+        rows = build_report_rows(usage, candidate_threshold=1, paths_by_skill=skills)
         if args.json:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         else:

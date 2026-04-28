@@ -222,3 +222,16 @@ def test_collect_usage_still_counts_leading_slash_command(tmp_path):
     result = collect_usage(home=tmp_path, known_skills={"writer"}, since_days=90)
 
     assert result["writer"].uses == 1
+
+
+def test_build_report_rows_includes_paths_count(tmp_path):
+    usage = {
+        "dup": Usage("dup", uses=0, last_used=None),
+    }
+    paths_by_skill = {
+        "dup": [tmp_path / ".codex" / "skills" / "dup", tmp_path / ".claude" / "skills" / "dup"],
+    }
+
+    rows = build_report_rows(usage, candidate_threshold=1, paths_by_skill=paths_by_skill)
+
+    assert rows[0]["paths"] == 2
