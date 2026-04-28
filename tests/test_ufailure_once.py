@@ -131,6 +131,9 @@ def test_build_report_rows_sorts_and_marks_low_use_candidates():
     rows = build_report_rows(usage, candidate_threshold=1)
 
     assert [row["skill"] for row in rows] == ["active", "rare", "unused"]
+    assert rows[0]["percent"] == 83.3
+    assert rows[1]["percent"] == 16.7
+    assert rows[2]["percent"] == 0.0
     assert rows[0]["candidate"] is False
     assert rows[1]["candidate"] is True
     assert rows[2]["candidate"] is True

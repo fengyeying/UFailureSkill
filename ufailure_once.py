@@ -162,11 +162,14 @@ def parse_days(value: str) -> int:
 
 def build_report_rows(usage: dict[str, Usage], candidate_threshold: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    total_uses = sum(entry.uses for entry in usage.values())
     for entry in usage.values():
+        percent = (entry.uses / total_uses * 100) if total_uses else 0.0
         rows.append(
             {
                 "skill": entry.skill,
                 "uses": entry.uses,
+                "percent": round(percent, 1),
                 "last_used": entry.last_used.isoformat() if entry.last_used else None,
                 "candidate": entry.uses <= candidate_threshold,
             }
@@ -190,7 +193,7 @@ def render_bar(uses: int, max_uses: int, width: int = BAR_WIDTH) -> str:
 
 def render_relative(last_used: object, now: datetime) -> str:
     if not last_used:
-        return "从未使用"
+        return "Never used"
     try:
         last = datetime.fromisoformat(str(last_used))
     except ValueError:
@@ -199,43 +202,43 @@ def render_relative(last_used: object, now: datetime) -> str:
         last = last.replace(tzinfo=timezone.utc)
     delta = (now - last).days
     if delta <= 0:
-        return "今天"
+        return "Today"
     if delta == 1:
-        return "昨天"
-    return f"{delta} 天前"
+        return "Yesterday"
+    return f"{delta} days ago"
 
 
 def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
     if not rows:
-        print("未发现可移除的 user skill（仅扫描 ~/.codex/skills/ 与 ~/.claude/skills/）。")
+        print("No removable user skills found (scanned only ~/.codex/skills/ and ~/.claude/skills/).")
         return
     now = datetime.now(timezone.utc)
     max_uses = max((int(row["uses"]) for row in rows), default=0)
     actives = [row for row in rows if not row["candidate"]]
     candidates = [row for row in rows if row["candidate"]]
 
-    print(f"  本地 Skill 用量 · 近 {since_days} 天")
-    print("  " + RULE * 66)
-    print(f"  {'Skill':28}  {'Uses':>4}  {'Bar':<16}  Last used")
-    print("  " + RULE * 66)
+    print(f"  Local Skill Usage · Last {since_days} days")
+    print("  " + RULE * 76)
+    print(f"  {'Skill':28}  {'Uses':>4}  {'Share':>6}  {'Bar':<16}  Last used")
+    print("  " + RULE * 76)
     for row in actives:
         bar = render_bar(int(row["uses"]), max_uses)
         last = render_relative(row["last_used"], now)
         name = str(row["skill"])[:28]
-        print(f"  {name:28}  {int(row['uses']):>4}  {bar}  {last}")
+        print(f"  {name:28}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
     if candidates:
-        print("  " + RULE * 6 + " 低使用率候选(uses ≤ 1) " + RULE * 30)
+        print("  " + RULE * 6 + " Failure Skills (uses <= 1) " + RULE * 38)
         for index, row in enumerate(candidates, start=1):
             bar = render_bar(int(row["uses"]), max_uses)
             last = render_relative(row["last_used"], now)
             prefix = f"[{index}]"
             name = str(row["skill"])[:23]
-            print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {bar}  {last}")
-    print("  " + RULE * 66)
-    print(f"  共 {len(rows)} 个 · 活跃 {len(actives)} · 候选 {len(candidates)}")
+            print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
+    print("  " + RULE * 76)
+    print(f"  Total {len(rows)} · Active {len(actives)} · Failure Skills {len(candidates)}")
     if candidates:
         print()
-        print("  要移除哪些？回复编号(如 1,2 或 all),或 skip 跳过。")
+        print("  Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.")
 
 
 def user_skill_roots(home: Path | None = None) -> list[Path]:

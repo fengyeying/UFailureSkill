@@ -7,10 +7,8 @@ UFailureSkill is a one-shot GuidePrompt for Codex and ClaudeCode. It ranks your 
 Copy this prompt into Codex or ClaudeCode:
 
 ```text
-请打开 https://github.com/<OWNER>/UFailureSkill 并运行 UFailureSkill。
+Open https://github.com/fengyeying/UFailureSkill and run UFailureSkill.
 ```
-
-Before publishing, replace `<OWNER>` with the GitHub owner or organization that hosts this repository.
 
 ## One-Shot Procedure
 
@@ -30,7 +28,7 @@ python3 /tmp/ufailure_once.py stats --since 90d
 python3 /tmp/ufailure_once.py stats --since 90d --json
 ```
 
-5. The script's last line already asks `要移除哪些？回复编号(如 1,2 或 all),或 skip 跳过。` Do not ask again. Wait for the user's reply.
+5. The script's last line already asks `Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.` Do not ask again. Wait for the user's reply.
 6. For each selected skill, run dry-run first:
 
 ```bash
@@ -52,24 +50,24 @@ python3 /tmp/ufailure_once.py remove <skill-name> --confirm
 The script's `stats` text output is the visualization. Example:
 
 ```text
-  本地 Skill 用量 · 近 90 天
-  ──────────────────────────────────────────────────────────────────
-  Skill                         Uses  Bar               Last used
-  ──────────────────────────────────────────────────────────────────
-  brainstorming                   23  ████████████████  2 天前
-  writing-plans                   12  ████████▌         5 天前
-  test-driven-development          8  █████▋            12 天前
-  debugging                        3  ██▏               23 天前
-  ────── 低使用率候选(uses ≤ 1) ──────────────────────────────
-  [1]  writer                      1  ▏                 61 天前
-  [2]  unused                      0  ·                 从未使用
-  ──────────────────────────────────────────────────────────────────
-  共 6 个 · 活跃 4 · 候选 2
+  Local Skill Usage · Last 90 days
+  ────────────────────────────────────────────────────────────────────────────
+  Skill                         Uses   Share  Bar               Last used
+  ────────────────────────────────────────────────────────────────────────────
+  brainstorming                   23   47.9%  ████████████████  2 days ago
+  writing-plans                   12   25.0%  ████████▌         5 days ago
+  test-driven-development          8   16.7%  █████▋            12 days ago
+  debugging                        3    6.2%  ██▏               23 days ago
+  ────── Failure Skills (uses <= 1) ──────────────────────────────────────
+  [1]  writer                      1    2.1%  ▏                 61 days ago
+  [2]  unused                      0    0.0%  ·                 Never used
+  ────────────────────────────────────────────────────────────────────────────
+  Total 6 · Active 4 · Failure Skills 2
 
-  要移除哪些？回复编号(如 1,2 或 all),或 skip 跳过。
+  Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.
 ```
 
-Bars are normalized against the highest-use skill in the run with 1/8-block resolution. `·` marks zero uses. Last-used dates render as `今天`, `昨天`, `N 天前`, or `从未使用` so users do not have to do date math.
+The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run with 1/8-block resolution. `·` marks zero uses. Low-use or unused skills are grouped under `Failure Skills`.
 
 After the user picks `1,2`, the agent shows the script's removal lines verbatim:
 
