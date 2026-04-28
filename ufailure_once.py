@@ -227,6 +227,9 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
     candidates = [row for row in rows if row["candidate"]]
 
     print(f"  Local Skill Usage · Last {since_days} days")
+    if not actives and candidates:
+        print("  Note: only ~/.codex/skills/ and ~/.claude/skills/ are scanned.")
+        print("        Plugin-installed skills (~/.claude/plugins/) are excluded; manage those with /plugin.")
     print("  " + RULE * 76)
     print(f"  {'Skill':28}  {'Uses':>4}  {'Share':>6}  {'Bar':<16}  Last used")
     print("  " + RULE * 76)

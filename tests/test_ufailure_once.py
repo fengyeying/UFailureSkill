@@ -235,3 +235,22 @@ def test_build_report_rows_includes_paths_count(tmp_path):
     rows = build_report_rows(usage, candidate_threshold=1, paths_by_skill=paths_by_skill)
 
     assert rows[0]["paths"] == 2
+
+
+import io
+from contextlib import redirect_stdout
+
+from ufailure_once import print_text_report
+
+
+def test_print_text_report_shows_plugin_hint_when_zero_active():
+    rows = [
+        {"skill": "lonely", "uses": 0, "percent": 0.0, "last_used": None, "candidate": True, "paths": 1},
+    ]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_text_report(rows, since_days=90)
+    out = buf.getvalue()
+
+    assert "plugin" in out.lower()
+    assert "/plugin" in out
