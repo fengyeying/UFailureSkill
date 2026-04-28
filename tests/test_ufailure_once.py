@@ -254,3 +254,17 @@ def test_print_text_report_shows_plugin_hint_when_zero_active():
 
     assert "plugin" in out.lower()
     assert "/plugin" in out
+
+
+from ufailure_once import truncate_name
+
+
+def test_truncate_name_uses_ellipsis_for_long_names():
+    assert truncate_name("short", 10) == "short"
+    long = "superpowers-test-driven-development-extended"
+    truncated = truncate_name(long, 23)
+    assert len(truncated) == 23
+    assert "…" in truncated
+    assert truncated.startswith("superpowers")
+    assert truncated.endswith("extended")
+    assert truncate_name("a" * 24, 23).endswith("a") and "…" in truncate_name("a" * 24, 23)

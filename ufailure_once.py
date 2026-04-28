@@ -200,6 +200,16 @@ def render_bar(uses: int, max_uses: int, width: int = BAR_WIDTH) -> str:
     return bar.ljust(width)
 
 
+def truncate_name(name: str, width: int) -> str:
+    if len(name) <= width:
+        return name
+    if width <= 1:
+        return name[:width]
+    head = (width - 1) // 2
+    tail = width - 1 - head
+    return f"{name[:head]}…{name[-tail:]}"
+
+
 def render_relative(last_used: object, now: datetime) -> str:
     if not last_used:
         return "Never used"
@@ -236,7 +246,7 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
     for row in actives:
         bar = render_bar(int(row["uses"]), max_uses)
         last = render_relative(row["last_used"], now)
-        name = str(row["skill"])[:28]
+        name = truncate_name(str(row["skill"]), 28)
         print(f"  {name:28}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
     if candidates:
         print("  " + RULE * 6 + " Failure Skills (uses <= 1) " + RULE * 38)
@@ -244,7 +254,7 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
             bar = render_bar(int(row["uses"]), max_uses)
             last = render_relative(row["last_used"], now)
             prefix = f"[{index}]"
-            name = str(row["skill"])[:23]
+            name = truncate_name(str(row["skill"]), 23)
             paths_count = int(row.get("paths", 0))
             suffix = f"  ⚠ {paths_count} paths" if paths_count > 1 else ""
             print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}{suffix}")
