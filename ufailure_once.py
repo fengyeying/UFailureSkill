@@ -147,6 +147,96 @@ def discover_user_skills(home: Path | None = None) -> dict[str, list[Path]]:
     return discovered
 
 
+BAR_PARTIALS = " ▏▎▍▌▋▊▉"
+BAR_FULL = "█"
+BAR_WIDTH = 16
+RULE = "─"
+
+
+def parse_days(value: str) -> int:
+    if value.endswith("d"):
+        return int(value[:-1])
+    return int(value)
+
+
+def build_report_rows(usage: dict[str, Usage], candidate_threshold: int) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for entry in usage.values():
+        rows.append(
+            {
+                "skill": entry.skill,
+                "uses": entry.uses,
+                "last_used": entry.last_used.isoformat() if entry.last_used else None,
+                "candidate": entry.uses <= candidate_threshold,
+            }
+        )
+    return sorted(rows, key=lambda row: (-int(row["uses"]), str(row["skill"])))
+
+
+def render_bar(uses: int, max_uses: int, width: int = BAR_WIDTH) -> str:
+    if max_uses <= 0:
+        return " " * width
+    if uses <= 0:
+        return "·" + " " * (width - 1)
+    eighths = max(1, round((uses / max_uses) * width * 8))
+    full, remainder = divmod(eighths, 8)
+    full = min(full, width)
+    bar = BAR_FULL * full
+    if remainder and full < width:
+        bar += BAR_PARTIALS[remainder]
+    return bar.ljust(width)
+
+
+def render_relative(last_used: object, now: datetime) -> str:
+    if not last_used:
+        return "从未使用"
+    try:
+        last = datetime.fromisoformat(str(last_used))
+    except ValueError:
+        return str(last_used)
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    delta = (now - last).days
+    if delta <= 0:
+        return "今天"
+    if delta == 1:
+        return "昨天"
+    return f"{delta} 天前"
+
+
+def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
+    if not rows:
+        print("未发现可移除的 user skill（仅扫描 ~/.codex/skills/ 与 ~/.claude/skills/）。")
+        return
+    now = datetime.now(timezone.utc)
+    max_uses = max((int(row["uses"]) for row in rows), default=0)
+    actives = [row for row in rows if not row["candidate"]]
+    candidates = [row for row in rows if row["candidate"]]
+
+    print(f"  本地 Skill 用量 · 近 {since_days} 天")
+    print("  " + RULE * 66)
+    print(f"  {'Skill':28}  {'Uses':>4}  {'Bar':<16}  Last used")
+    print("  " + RULE * 66)
+    for row in actives:
+        bar = render_bar(int(row["uses"]), max_uses)
+        last = render_relative(row["last_used"], now)
+        name = str(row["skill"])[:28]
+        print(f"  {name:28}  {int(row['uses']):>4}  {bar}  {last}")
+    if candidates:
+        print("  " + RULE * 6 + " 低使用率候选(uses ≤ 1) " + RULE * 30)
+        for index, row in enumerate(candidates, start=1):
+            bar = render_bar(int(row["uses"]), max_uses)
+            last = render_relative(row["last_used"], now)
+            prefix = f"[{index}]"
+            name = str(row["skill"])[:23]
+            print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {bar}  {last}")
+    print("  " + RULE * 66)
+    print(f"  共 {len(rows)} 个 · 活跃 {len(actives)} · 候选 {len(candidates)}")
+    if candidates:
+        print()
+        print("  要移除哪些？回复编号(如 1,2 或 all),或 skip 跳过。")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ufailure_once.py")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -165,7 +255,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
-    parser.parse_args(argv)
+    args = parser.parse_args(argv)
+
+    if args.command == "stats":
+        since_days = parse_days(args.since)
+        skills = discover_user_skills()
+        usage = collect_usage(home=None, known_skills=set(skills), since_days=since_days)
+        rows = build_report_rows(usage, candidate_threshold=1)
+        if args.json:
+            print(json.dumps(rows, ensure_ascii=False, indent=2))
+        else:
+            print_text_report(rows, since_days=since_days)
+        return 0
+
+    if args.command == "remove":
+        parser.error("remove is not implemented yet")
+
     return 0
 
 

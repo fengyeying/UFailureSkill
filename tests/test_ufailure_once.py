@@ -114,3 +114,23 @@ def test_collect_usage_skips_skill_listing_nodes_only(tmp_path):
 
     assert result["writer"].uses == 1
     assert result["unused"].uses == 0
+
+
+from datetime import datetime, timezone
+
+from ufailure_once import Usage, build_report_rows
+
+
+def test_build_report_rows_sorts_and_marks_low_use_candidates():
+    usage = {
+        "active": Usage("active", uses=5, last_used=datetime(2026, 4, 28, tzinfo=timezone.utc)),
+        "rare": Usage("rare", uses=1, last_used=datetime(2026, 4, 1, tzinfo=timezone.utc)),
+        "unused": Usage("unused", uses=0, last_used=None),
+    }
+
+    rows = build_report_rows(usage, candidate_threshold=1)
+
+    assert [row["skill"] for row in rows] == ["active", "rare", "unused"]
+    assert rows[0]["candidate"] is False
+    assert rows[1]["candidate"] is True
+    assert rows[2]["candidate"] is True
