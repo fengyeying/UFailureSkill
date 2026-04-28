@@ -268,3 +268,17 @@ def test_truncate_name_uses_ellipsis_for_long_names():
     assert truncated.startswith("superpowers")
     assert truncated.endswith("extended")
     assert truncate_name("a" * 24, 23).endswith("a") and "…" in truncate_name("a" * 24, 23)
+
+
+import pytest
+
+from ufailure_once import parse_days
+
+
+def test_parse_days_rejects_non_positive():
+    with pytest.raises(ValueError):
+        parse_days("0d")
+    with pytest.raises(ValueError):
+        parse_days("-7d")
+    with pytest.raises(ValueError):
+        parse_days("0")

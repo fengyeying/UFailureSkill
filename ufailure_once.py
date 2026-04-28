@@ -158,9 +158,11 @@ RULE = "─"
 
 
 def parse_days(value: str) -> int:
-    if value.endswith("d"):
-        return int(value[:-1])
-    return int(value)
+    raw = value[:-1] if value.endswith("d") else value
+    days = int(raw)
+    if days <= 0:
+        raise ValueError(f"--since must be a positive number of days, got {value!r}")
+    return days
 
 
 def build_report_rows(
