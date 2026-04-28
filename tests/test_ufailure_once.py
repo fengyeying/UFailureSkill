@@ -190,3 +190,35 @@ def test_collect_usage_handles_naive_timestamp(tmp_path):
     result = collect_usage(home=tmp_path, known_skills={"foo"}, since_days=90)
 
     assert result["foo"].uses == 1
+
+
+def test_collect_usage_ignores_slash_inside_file_paths(tmp_path):
+    write_jsonl(
+        tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {"content": [{"text": "see /tmp/foo.py for details"}]},
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"tmp"}, since_days=90)
+
+    assert result["tmp"].uses == 0
+
+
+def test_collect_usage_still_counts_leading_slash_command(tmp_path):
+    write_jsonl(
+        tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {"content": [{"type": "input_text", "text": "/writer draft this"}]},
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"writer"}, since_days=90)
+
+    assert result["writer"].uses == 1

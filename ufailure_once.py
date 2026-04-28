@@ -15,7 +15,7 @@ from typing import Any, Iterable
 
 USING_RE = re.compile(r"\bUsing\s+([A-Za-z0-9_.:-]+)\s+skill\b", re.IGNORECASE)
 CN_USING_RE = re.compile(r"使用(?:了)?\s*([A-Za-z0-9_.:-]+)\s*(?:skill|技能)", re.IGNORECASE)
-SLASH_RE = re.compile(r"(?<!\w)/([A-Za-z0-9_.:-]+)\b")
+LEADING_SLASH_RE = re.compile(r"\A\s*/([A-Za-z0-9_.:-]+)\b")
 MD_SKILL_RE = re.compile(r"\[\$?([A-Za-z0-9_.:-]+)\]\([^)]*/SKILL\.md\)")
 
 SKILL_LIST_MARKERS = (
@@ -95,7 +95,7 @@ def extract_text_skills(row: Any, known_skills: set[str]) -> set[str]:
             continue
         if any(marker in node for marker in SKILL_LIST_MARKERS):
             continue
-        for regex in (USING_RE, CN_USING_RE, MD_SKILL_RE, SLASH_RE):
+        for regex in (USING_RE, CN_USING_RE, MD_SKILL_RE, LEADING_SLASH_RE):
             for match in regex.findall(node):
                 if match in known_skills:
                     found.add(match)
