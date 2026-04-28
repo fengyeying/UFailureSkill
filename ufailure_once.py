@@ -4,6 +4,27 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+
+
+def discover_user_skills(home: Path | None = None) -> dict[str, list[Path]]:
+    base = home or Path.home()
+    roots = [
+        base / ".codex" / "skills",
+        base / ".claude" / "skills",
+    ]
+    discovered: dict[str, list[Path]] = {}
+    for root in roots:
+        if not root.exists():
+            continue
+        for skill_file in root.glob("*/SKILL.md"):
+            skill_dir = skill_file.parent
+            if skill_dir.name.startswith("."):
+                continue
+            if ".system" in skill_dir.parts:
+                continue
+            discovered.setdefault(skill_dir.name, []).append(skill_dir)
+    return discovered
 
 
 def build_parser() -> argparse.ArgumentParser:
