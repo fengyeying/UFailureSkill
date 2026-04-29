@@ -229,15 +229,39 @@ def _gather_user_dir_skills(roots: list[Path], scope: str) -> dict[str, Discover
     return found
 
 
+def _read_installed_plugin_names(plugins_root: Path) -> set[str]:
+    """Return the set of installed plugin names from installed_plugins.json.
+
+    Plugin keys have the form ``<name>@<marketplace>``; this returns just
+    the ``<name>`` part (before the ``@``).  Returns an empty set if the
+    config is missing or malformed.
+    """
+    config_path = plugins_root / "installed_plugins.json"
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {k.split("@")[0] for k in config.get("plugins", {})}
+
+
 def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
-    """Discover plugin skills from the marketplace directory only.
+    """Discover installed plugin skills from the marketplace directory.
 
     Skips the cache (``cache/``) entirely — the marketplace is the source of
     truth and scanning cache caused duplicate entries under SHA-based names.
+    Only returns plugins listed in ``installed_plugins.json`` so that
+    uninstalled marketplace entries are not included in the report.
+
+    A marketplace sub-plugin matches if its directory name equals or starts
+    with (``<name>-``) an installed plugin name.  For example, an installed
+    name ``nowledge-mem`` matches marketplace directories like
+    ``nowledge-mem-claude-code-plugin``, ``nowledge-mem-codex-plugin``, etc.
+    All matched sub-plugins are reported under the canonical installed name.
     """
     found: dict[str, DiscoveredSkill] = {}
     if not plugins_root.exists():
         return found
+    installed_names = _read_installed_plugin_names(plugins_root)
     marketplaces = plugins_root / "marketplaces"
     if not marketplaces.exists():
         return found
@@ -259,7 +283,16 @@ def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
             break
         if not plugin_name:
             continue
-        full_name = f"{plugin_name}:{skill_name}"
+        # Match against installed names, allowing sub-plugin variants
+        # (e.g. "nowledge-mem-claude-code-plugin" matches installed "nowledge-mem").
+        canonical_name: str | None = None
+        for installed in installed_names:
+            if plugin_name == installed or plugin_name.startswith(installed + "-"):
+                canonical_name = installed
+                break
+        if canonical_name is None:
+            continue
+        full_name = f"{canonical_name}:{skill_name}"
         entry = found.setdefault(
             full_name, DiscoveredSkill(full_name, [], SCOPE_PLUGIN, removable=False)
         )

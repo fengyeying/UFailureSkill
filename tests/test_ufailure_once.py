@@ -488,10 +488,20 @@ def test_discover_skills_skips_project_when_same_as_home(tmp_path):
     assert skills[0].scope == SCOPE_USER
 
 
+def _write_installed_plugins(plugins_root: Path, *plugin_names: str) -> None:
+    """Write a minimal installed_plugins.json for the given plugin names."""
+    plugins = {f"{name}@marketplace": [{"scope": "user", "installPath": "/tmp/fake"}] for name in plugin_names}
+    (plugins_root / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": plugins}), encoding="utf-8"
+    )
+
+
 def test_discover_skills_finds_plugin_skills_with_namespaced_names(tmp_path):
-    plugin_path = tmp_path / ".claude" / "plugins" / "marketplaces" / "superpowers" / "skills" / "brainstorming"
+    plugins_root = tmp_path / ".claude" / "plugins"
+    plugin_path = plugins_root / "marketplaces" / "superpowers" / "skills" / "brainstorming"
     plugin_path.mkdir(parents=True)
     (plugin_path / "SKILL.md").write_text("# b\n", encoding="utf-8")
+    _write_installed_plugins(plugins_root, "superpowers")
 
     skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
 
@@ -502,9 +512,11 @@ def test_discover_skills_finds_plugin_skills_with_namespaced_names(tmp_path):
 
 
 def test_discover_skills_finds_plugin_skills_in_marketplace_layout(tmp_path):
-    plugin_path = tmp_path / ".claude" / "plugins" / "marketplaces" / "marketplace" / "external_plugins" / "imessage" / "skills" / "access"
+    plugins_root = tmp_path / ".claude" / "plugins"
+    plugin_path = plugins_root / "marketplaces" / "marketplace" / "external_plugins" / "imessage" / "skills" / "access"
     plugin_path.mkdir(parents=True)
     (plugin_path / "SKILL.md").write_text("# a\n", encoding="utf-8")
+    _write_installed_plugins(plugins_root, "imessage")
 
     skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
 
@@ -517,18 +529,38 @@ def test_discover_skills_finds_plugin_skills_in_marketplace_layout(tmp_path):
 def test_discover_skills_skips_platform_variant_dirs(tmp_path, platform_dir):
     """Platform-specific subdirs (e.g. .cursor/, .windsurf/) inside a plugin
     must not be mistaken for the plugin name."""
+    plugins_root = tmp_path / ".claude" / "plugins"
     variant_path = (
-        tmp_path / ".claude" / "plugins" / "marketplaces" / "caveman"
+        plugins_root / "marketplaces" / "caveman"
         / platform_dir / "skills" / "caveman"
     )
     variant_path.mkdir(parents=True)
     (variant_path / "SKILL.md").write_text("# c\n", encoding="utf-8")
+    _write_installed_plugins(plugins_root, "caveman")
 
     skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
 
     plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
     assert len(plugin_entries) == 1
     assert plugin_entries[0].name == "caveman:caveman"
+
+
+def test_discover_skills_skips_uninstalled_marketplace_plugins(tmp_path):
+    """Plugins in marketplace/ but not in installed_plugins.json must be skipped."""
+    plugins_root = tmp_path / ".claude" / "plugins"
+    installed_path = plugins_root / "marketplaces" / "m1" / "alpha" / "skills" / "s1"
+    installed_path.mkdir(parents=True)
+    (installed_path / "SKILL.md").write_text("# a\n")
+    uninstalled_path = plugins_root / "marketplaces" / "m2" / "beta" / "skills" / "s2"
+    uninstalled_path.mkdir(parents=True)
+    (uninstalled_path / "SKILL.md").write_text("# b\n")
+    _write_installed_plugins(plugins_root, "alpha")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
+    assert len(plugin_entries) == 1
+    assert plugin_entries[0].name == "alpha:s1"
 
 
 def test_collect_usage_counts_namespaced_plugin_skill_invocations(tmp_path):
