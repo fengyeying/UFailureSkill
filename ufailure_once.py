@@ -182,7 +182,7 @@ SCOPE_PROJECT = "proj"
 SCOPE_PLUGIN = "plug"
 
 _VERSION_RE = re.compile(r"^\d+(\.\d+)+$")
-_PLUGIN_PATH_NOISE = {"plugins", "cache", "marketplaces", "external_plugins"}
+_PLUGIN_PATH_NOISE = {"plugins", "cache", "marketplaces", "external_plugins", ".cursor", ".windsurf"}
 
 
 @dataclass

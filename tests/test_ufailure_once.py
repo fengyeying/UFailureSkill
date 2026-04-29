@@ -513,6 +513,24 @@ def test_discover_skills_finds_plugin_skills_in_marketplace_layout(tmp_path):
     assert plugin_entries[0].name == "imessage:access"
 
 
+@pytest.mark.parametrize("platform_dir", [".cursor", ".windsurf"])
+def test_discover_skills_skips_platform_variant_dirs(tmp_path, platform_dir):
+    """Platform-specific subdirs (e.g. .cursor/, .windsurf/) inside a plugin
+    must not be mistaken for the plugin name."""
+    variant_path = (
+        tmp_path / ".claude" / "plugins" / "marketplaces" / "caveman"
+        / platform_dir / "skills" / "caveman"
+    )
+    variant_path.mkdir(parents=True)
+    (variant_path / "SKILL.md").write_text("# c\n", encoding="utf-8")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
+    assert len(plugin_entries) == 1
+    assert plugin_entries[0].name == "caveman:caveman"
+
+
 def test_collect_usage_counts_namespaced_plugin_skill_invocations(tmp_path):
     write_jsonl(
         tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
