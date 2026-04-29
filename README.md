@@ -47,44 +47,57 @@ python3 /tmp/ufailure_once.py remove <skill-name> --confirm
 
 ## What It Looks Like
 
-The script's `stats` text output is the visualization. When piped (the default for agent harnesses) it emits pure ASCII so renderers can't mangle it:
+The script's `stats` text output is the visualization. Three scope sections (Global / Project / Plugin) are always rendered — empty ones say `(none)` — followed by a separate Failure Skills list with the deletion selectors. ASCII by default when piped (agent-safe); Unicode block-character bars when stdout is a TTY or with `--rich`.
 
 ```text
   Local Skill Usage - Last 90 days
-  Scope codes: user = ~/.claude/skills/  proj = ./.claude/skills/  plug = plugin (read-only, manage via /plugin).
   --------------------------------------------------------------------------------
-  Skill                         Scope  Uses   Share  Bar               Last used
+
+  Global skills (~/.codex/skills/, ~/.claude/skills/ - removable)
   --------------------------------------------------------------------------------
-  superpowers:executing-plans   plug      2   66.7%  ################  Today
-  superpowers:writing-plans     plug      1   33.3%  ########          Today
-  ... 37 unused plugin skills hidden (use --all to show)
-  ------ Failure Skills (removable, uses <= 1) -----------------------------------
-  [1]  ask-questi..erspecified  user      0    0.0%  .                 Never used
-  [2]  deep-research            user      0    0.0%  .                 Never used
-  [3]  frontend-design          user      0    0.0%  .                 Never used
+  Skill                             Uses   Share  Bar               Last used
+  ask-questions-if-underspecified      0    0.0%  .                 Never used
+  deep-research                        0    0.0%  .                 Never used
+  frontend-design                      0    0.0%  .                 Never used
+
+  Project skills (./.codex/skills/, ./.claude/skills/ - removable)
   --------------------------------------------------------------------------------
-  Total 42 - Used 2 - Failure Skills 3 - Plugin 39 (read-only)
+  (none)
+
+  Plugin skills (~/.claude/plugins/ - read-only, manage via /plugin)
+  --------------------------------------------------------------------------------
+  Skill                             Uses   Share  Bar               Last used
+  superpowers:executing-plans          2   66.7%  ################  Today
+  superpowers:writing-plans            1   33.3%  ########          Today
+  superpowers:brainstorming            0    0.0%  .                 Never used
+  ... (more plugin rows)
+
+  Failure Skills (removable, uses <= 1) - pick numbers to remove
+  --------------------------------------------------------------------------------
+  Sel  Skill                        Uses   Share  Bar               Last used
+  [1]  ask-questions-if-underspeci     0    0.0%  .                 Never used  (user)
+  [2]  deep-research                   0    0.0%  .                 Never used  (user)
+  [3]  frontend-design                 0    0.0%  .                 Never used  (user)
+
+  --------------------------------------------------------------------------------
+  Total 42 | Used 2 | Global 3 | Project 0 | Plugin 39 | Failure 3
 
   Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.
 ```
 
-The same report renders with Unicode block-characters for finer-grained bars when stdout is a TTY (or with `--rich`). Force ASCII regardless with `--ascii`.
+## Scope Sections
 
-## Scope Column
+Each skill belongs to exactly one scope, and the report lists every skill under its section so you can see the full inventory:
 
-Each skill carries a 4-letter scope code so you can see at a glance where it lives and whether you can act on it:
+| Section | Origin | Removable? |
+|---------|--------|------------|
+| **Global skills** | `~/.codex/skills/<name>/` or `~/.claude/skills/<name>/` | yes |
+| **Project skills** | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/` | yes |
+| **Plugin skills** | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
 
-| Code | Origin | Removable? |
-|------|--------|------------|
-| `user` | `~/.codex/skills/<name>/` or `~/.claude/skills/<name>/` | yes |
-| `proj` | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/` | yes |
-| `plug` | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
+Plugin skills are shown in full (used and unused), so their usage counts are visible alongside the global / project skills you might want to clean up. They are never deletion candidates and never get an `[N]` selector.
 
-Plugin skills are listed for awareness (and so their usage is counted correctly when invoked via the `Skill` tool), but they are never deletion candidates and never get an `[N]` selector.
-
-By default the text report hides plugin skills with zero uses to keep things readable; pass `--all` to see the full inventory.
-
-The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses. Low-use removable skills are grouped under `Failure Skills` with `[N]` selectors for the deletion question.
+The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses. Low-use removable skills are grouped under `Failure Skills` with `[N]` selectors plus a `(scope)` tag for the deletion question.
 
 After the user picks `1,2`, the agent shows the script's removal lines verbatim:
 

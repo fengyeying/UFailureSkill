@@ -243,7 +243,7 @@ from contextlib import redirect_stdout
 from ufailure_once import print_text_report
 
 
-def test_print_text_report_shows_scope_hint_when_plugin_rows_present():
+def test_print_text_report_renders_scope_sections_and_plugin_pointer():
     rows = [
         {"skill": "lonely", "uses": 0, "percent": 0.0, "last_used": None, "candidate": True, "paths": 1, "scope": "user", "removable": True},
         {"skill": "superpowers:brainstorming", "uses": 5, "percent": 100.0, "last_used": None, "candidate": False, "paths": 1, "scope": "plug", "removable": False},
@@ -253,8 +253,104 @@ def test_print_text_report_shows_scope_hint_when_plugin_rows_present():
         print_text_report(rows, since_days=90)
     out = buf.getvalue()
 
-    assert "plug" in out.lower()
+    # Each scope gets its own titled section so user can see at a glance
+    # what is global, project, and plugin.
+    assert "Global skills" in out
+    assert "Project skills" in out
+    assert "Plugin skills" in out
+    # The plugin pointer + read-only marker are shown in the section header
+    # so the user knows to use /plugin to manage them.
     assert "/plugin" in out
+    assert "read-only" in out
+
+
+def test_print_text_report_shows_section_for_empty_project_scope():
+    rows = [
+        {"skill": "writer", "uses": 1, "percent": 100.0, "last_used": None, "candidate": True, "paths": 1, "scope": "user", "removable": True},
+    ]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_text_report(rows, since_days=90)
+    out = buf.getvalue()
+
+    # Project section is always rendered (with "(none)" if empty) so the
+    # user can see the distinction even when they have no project skills.
+    assert "Project skills" in out
+    assert "(none)" in out
+
+
+def test_collect_usage_counts_codex_skill_md_path_mentions(tmp_path):
+    """Codex Desktop invokes skills by reading their SKILL.md path through
+    exec_command. The transcript records the path in function_call args; we
+    must recognise it as a skill invocation."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "2026" / "04" / "29" / "rollout.jsonl",
+        [
+            {
+                "timestamp": "2026-04-29T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": {"command": "cat /Users/me/.codex/skills/deep-research/SKILL.md"},
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"deep-research"}, since_days=90)
+
+    assert result["deep-research"].uses == 1
+
+
+def test_collect_usage_resolves_plugin_namespace_from_path(tmp_path):
+    """A path under ~/.claude/plugins/<plugin>/.../skills/<name>/SKILL.md
+    should count against the namespaced known-skill name."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "2026" / "04" / "29" / "rollout.jsonl",
+        [
+            {
+                "timestamp": "2026-04-29T00:00:00Z",
+                "type": "response_item",
+                "payload": {
+                    "type": "function_call",
+                    "name": "exec_command",
+                    "arguments": {
+                        "command": "cat /Users/me/.claude/plugins/cache/m/superpowers/5.0.6/skills/brainstorming/SKILL.md"
+                    },
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(
+        home=tmp_path,
+        known_skills={"superpowers:brainstorming", "brainstorming"},
+        since_days=90,
+    )
+
+    # The namespaced form should win; the bare form should not double-count.
+    assert result["superpowers:brainstorming"].uses == 1
+    assert result["brainstorming"].uses == 0
+
+
+def test_print_text_report_lists_all_plugin_skills_regardless_of_uses():
+    rows = [
+        {"skill": "superpowers:used", "uses": 3, "percent": 100.0, "last_used": None, "candidate": False, "paths": 1, "scope": "plug", "removable": False},
+        {"skill": "superpowers:unused", "uses": 0, "percent": 0.0, "last_used": None, "candidate": False, "paths": 1, "scope": "plug", "removable": False},
+        {"skill": "anthropic-skills:also-unused", "uses": 0, "percent": 0.0, "last_used": None, "candidate": False, "paths": 1, "scope": "plug", "removable": False},
+    ]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_text_report(rows, since_days=90)
+    out = buf.getvalue()
+
+    # All three plugin rows must appear, including the two with zero uses.
+    assert "superpowers:used" in out
+    assert "superpowers:unused" in out
+    assert "anthropic-skills:also-unused" in out
+    # No "hidden" message since we no longer gate plugin display.
+    assert "hidden" not in out.lower()
 
 
 from ufailure_once import truncate_name

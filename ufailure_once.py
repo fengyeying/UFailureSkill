@@ -18,6 +18,11 @@ USING_RE = re.compile(r"\bUsing\s+([A-Za-z0-9_.:-]+)\s+skill\b", re.IGNORECASE)
 CN_USING_RE = re.compile(r"使用(?:了)?\s*([A-Za-z0-9_.:-]+)\s*(?:skill|技能)", re.IGNORECASE)
 LEADING_SLASH_RE = re.compile(r"\A\s*/([A-Za-z0-9_.:-]+)\b")
 MD_SKILL_RE = re.compile(r"\[\$?([A-Za-z0-9_.:-]+)\]\([^)]*/SKILL\.md\)")
+# Codex Desktop activates skills by `cat`ing the SKILL.md path through
+# exec_command rather than via a structured Skill tool. Match any path of the
+# form `/skills/<name>/SKILL.md` so both Codex exec output and Claude Code
+# markdown links land on the same counter.
+SKILL_PATH_RE = re.compile(r"/skills/([A-Za-z0-9_.:-]+)/SKILL\.md")
 
 SKILL_LIST_MARKERS = (
     "### Available skills",
@@ -88,6 +93,31 @@ def extract_tool_use_skills(row: Any, known_skills: set[str]) -> set[str]:
     return found
 
 
+def _resolve_path_skill(node: str, bare: str, match_start: int, known_skills: set[str]) -> str | None:
+    """Map a SKILL.md path's directory name to the appropriate known-skill key.
+
+    For paths under ~/.claude/plugins/, the canonical name is namespaced
+    (`<plugin>:<skill>`); for paths under user / project skill roots, the
+    bare directory name is canonical. Decide based on whether `/plugins/`
+    appears in the path prefix so the same `<name>` doesn't double-count
+    against both a plugin entry and a same-named user entry.
+    """
+    prefix = node[:match_start]
+    if "/plugins/" in prefix:
+        for known in known_skills:
+            if ":" not in known:
+                continue
+            plugin_name, plugin_skill = known.split(":", 1)
+            if plugin_skill != bare:
+                continue
+            if f"/{plugin_name}/" in prefix or prefix.endswith(f"/{plugin_name}"):
+                return known
+        return None
+    if bare in known_skills:
+        return bare
+    return None
+
+
 def extract_text_skills(row: Any, known_skills: set[str]) -> set[str]:
     """Pull skill names from textual mentions, skipping skill-listing leaves only."""
     found: set[str] = set()
@@ -100,6 +130,11 @@ def extract_text_skills(row: Any, known_skills: set[str]) -> set[str]:
             for match in regex.findall(node):
                 if match in known_skills:
                     found.add(match)
+        # Codex `cat /.../skills/<name>/SKILL.md` and similar path mentions.
+        for match in SKILL_PATH_RE.finditer(node):
+            resolved = _resolve_path_skill(node, match.group(1), match.start(), known_skills)
+            if resolved is not None:
+                found.add(resolved)
     return found
 
 
@@ -392,72 +427,115 @@ def render_relative(last_used: object, now: datetime) -> str:
     return f"{delta} days ago"
 
 
+SECTION_TITLES: tuple[tuple[str, str, str], ...] = (
+    (SCOPE_USER, "Global skills", "~/.codex/skills/, ~/.claude/skills/ - removable"),
+    (SCOPE_PROJECT, "Project skills", "./.codex/skills/, ./.claude/skills/ - removable"),
+    (SCOPE_PLUGIN, "Plugin skills", "~/.claude/plugins/ - read-only, manage via /plugin"),
+)
+
+
+def _format_skill_row(
+    row: dict[str, object],
+    max_uses: int,
+    now: datetime,
+    glyphs: Glyphs,
+    name_width: int,
+) -> str:
+    bar = render_bar(int(row["uses"]), max_uses, glyphs)
+    last = render_relative(row["last_used"], now)
+    name = truncate_name(str(row["skill"]), name_width, glyphs)
+    paths_count = int(row.get("paths", 0))
+    suffix = f"  {glyphs.warn} {paths_count} paths" if paths_count > 1 else ""
+    return (
+        f"{name:<{name_width}}  {int(row['uses']):>4}  "
+        f"{float(row['percent']):>5.1f}%  {bar}  {last}{suffix}"
+    )
+
+
 def print_text_report(
     rows: list[dict[str, object]],
     since_days: int,
     glyphs: Glyphs = RICH_GLYPHS,
-    show_all: bool = False,
+    show_all: bool = True,  # kept for backwards compatibility; no longer gates anything
 ) -> None:
     if not rows:
         print("No skills discovered under ~/.codex/skills/, ~/.claude/skills/, or ~/.claude/plugins/.")
         return
+    del show_all  # unused
     now = datetime.now(timezone.utc)
     max_uses = max((int(row["uses"]) for row in rows), default=0)
-    plugin_count = sum(1 for row in rows if row.get("scope") == SCOPE_PLUGIN)
-    plugin_unused = sum(
-        1 for row in rows if row.get("scope") == SCOPE_PLUGIN and int(row["uses"]) == 0
-    )
     used_count = sum(1 for row in rows if int(row["uses"]) > 0)
-
-    # Unused plugin skills create most of the visual noise on a typical
-    # ClaudeCode setup (dozens of plugins, only a handful invoked). Hide
-    # them by default; users can pass `--all` to see the full inventory.
-    visible = (
-        rows
-        if show_all
-        else [
-            row
-            for row in rows
-            if not (row.get("scope") == SCOPE_PLUGIN and int(row["uses"]) == 0)
-        ]
-    )
-    actives = [row for row in visible if not row["candidate"]]
-    candidates = [row for row in visible if row["candidate"]]
-    hidden_plugins = plugin_unused if not show_all else 0
 
     rule = glyphs.rule
     width = 80
+    name_width = 32
+    cand_name_width = name_width - 5  # leave 5 chars for "[N]  "
+
+    by_scope: dict[str, list[dict[str, object]]] = {
+        SCOPE_USER: [],
+        SCOPE_PROJECT: [],
+        SCOPE_PLUGIN: [],
+    }
+    for row in rows:
+        scope = str(row.get("scope", SCOPE_USER))
+        by_scope.setdefault(scope, []).append(row)
+
+    sort_key = lambda row: (-int(row["uses"]), str(row["skill"]))
+    for scope_rows in by_scope.values():
+        scope_rows.sort(key=sort_key)
+
+    candidates = sorted([row for row in rows if row["candidate"]], key=sort_key)
+
+    header_row = (
+        f"  {'Skill':<{name_width}}  {'Uses':>4}  {'Share':>6}  "
+        f"{'Bar':<16}  Last used"
+    )
 
     print(f"  Local Skill Usage - Last {since_days} days")
-    if plugin_count:
-        print(f"  Scope codes: user = ~/.claude/skills/  proj = ./.claude/skills/  plug = plugin (read-only, manage via /plugin).")
     print("  " + rule * width)
-    print(f"  {'Skill':28}  {'Scope':<5}  {'Uses':>4}  {'Share':>6}  {'Bar':<16}  Last used")
-    print("  " + rule * width)
-    for row in actives:
-        bar = render_bar(int(row["uses"]), max_uses, glyphs)
-        last = render_relative(row["last_used"], now)
-        name = truncate_name(str(row["skill"]), 28, glyphs)
-        scope = str(row.get("scope", SCOPE_USER))
-        print(f"  {name:28}  {scope:<5}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
-    if hidden_plugins:
-        print(f"  ... {hidden_plugins} unused plugin skills hidden (use --all to show)")
+
+    # One section per scope, always shown so the user can see what each scope
+    # contains (or that it's empty). Section title + sub-rule + header + rows.
+    for scope_code, title, location in SECTION_TITLES:
+        scope_rows = by_scope.get(scope_code, [])
+        print()
+        print(f"  {title} ({location})")
+        print("  " + rule * width)
+        if not scope_rows:
+            print("  (none)")
+            continue
+        print(header_row)
+        for row in scope_rows:
+            print(f"  {_format_skill_row(row, max_uses, now, glyphs, name_width)}")
+
+    # Failure Skills section: removable + low-use across all scopes,
+    # with [N] selectors that the agent feeds back to `remove`.
     if candidates:
-        print("  " + rule * 6 + " Failure Skills (removable, uses <= 1) " + rule * 35)
+        print()
+        print("  Failure Skills (removable, uses <= 1) - pick numbers to remove")
+        print("  " + rule * width)
+        print(
+            f"  {'Sel':<4} {'Skill':<{cand_name_width}}  {'Uses':>4}  "
+            f"{'Share':>6}  {'Bar':<16}  Last used"
+        )
         for index, row in enumerate(candidates, start=1):
-            bar = render_bar(int(row["uses"]), max_uses, glyphs)
-            last = render_relative(row["last_used"], now)
             prefix = f"[{index}]"
-            name = truncate_name(str(row["skill"]), 23, glyphs)
             scope = str(row.get("scope", SCOPE_USER))
-            paths_count = int(row.get("paths", 0))
-            suffix = f"  {glyphs.warn} {paths_count} paths" if paths_count > 1 else ""
-            print(f"  {prefix:<4} {name:23}  {scope:<5}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}{suffix}")
+            scope_tag = f"  ({scope})"
+            line = _format_skill_row(row, max_uses, now, glyphs, cand_name_width)
+            print(f"  {prefix:<4} {line}{scope_tag}")
+
+    print()
     print("  " + rule * width)
-    summary = f"  Total {len(rows)} - Used {used_count} - Failure Skills {len(candidates)}"
-    if plugin_count:
-        summary += f" - Plugin {plugin_count} (read-only)"
-    print(summary)
+    summary_parts = [
+        f"Total {len(rows)}",
+        f"Used {used_count}",
+        f"Global {len(by_scope.get(SCOPE_USER, []))}",
+        f"Project {len(by_scope.get(SCOPE_PROJECT, []))}",
+        f"Plugin {len(by_scope.get(SCOPE_PLUGIN, []))}",
+        f"Failure {len(candidates)}",
+    ]
+    print("  " + " | ".join(summary_parts))
     if candidates:
         print()
         print("  Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.")
@@ -532,12 +610,6 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subparsers.add_parser("stats")
     stats.add_argument("--since", default="90d")
     stats.add_argument("--json", action="store_true")
-    stats.add_argument(
-        "--all",
-        dest="show_all",
-        action="store_true",
-        help="Include unused plugin skills in the text report (hidden by default).",
-    )
     glyph_group = stats.add_mutually_exclusive_group()
     glyph_group.add_argument(
         "--ascii",
@@ -582,7 +654,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         else:
             glyphs = select_glyphs(force_rich=args.rich, force_ascii=args.ascii_only)
-            print_text_report(rows, since_days=since_days, glyphs=glyphs, show_all=args.show_all)
+            print_text_report(rows, since_days=since_days, glyphs=glyphs)
         return 0
 
     if args.command == "remove":
