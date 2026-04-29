@@ -6,6 +6,18 @@ You paste one prompt. Your agent fetches a single Python file to `/tmp`, runs it
 
 ---
 
+## How To Run
+
+Copy this prompt into Codex or Claude Code:
+
+```text
+Open https://github.com/fengyeying/UFailureSkill and run UFailureSkill.
+```
+
+That's it. The agent reads the procedure below from this README, runs the report, asks you which low-use skills to remove, and cleans up after itself.
+
+---
+
 ## The One-Shot Promise
 
 Before running:
@@ -28,16 +40,6 @@ After running:
 If you change your mind partway through, reply `skip` and the script does nothing destructive.
 
 ---
-
-## How To Run
-
-Copy this prompt into Codex or Claude Code:
-
-```text
-Open https://github.com/fengyeying/UFailureSkill and run UFailureSkill.
-```
-
-That's it. The agent reads the procedure below from this README, runs the report, asks you which low-use skills to remove, and cleans up after itself.
 
 ---
 
@@ -91,11 +93,11 @@ You reply with the numbers you want gone (or `all`, or `skip`). Removal is two-s
 
 Each skill belongs to exactly one scope. The report lists every skill under its section so you can see the full inventory:
 
-| Section | Origin | Removable? |
-|---------|--------|------------|
-| **Global skills** | `~/.codex/skills/<name>/` or `~/.claude/skills/<name>/` | yes |
-| **Project skills** | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/` | yes |
-| **Plugin skills** | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
+| Section                  | Origin                                                                            | Removable?                   |
+| ------------------------ | --------------------------------------------------------------------------------- | ---------------------------- |
+| **Global skills**  | `~/.codex/skills/<name>/` or `~/.claude/skills/<name>/`                       | yes                          |
+| **Project skills** | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/`               | yes                          |
+| **Plugin skills**  | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
 
 Plugin skills are shown in full (used and unused) so their usage counts are visible alongside the global / project skills you might want to clean up. They are never deletion candidates and never get an `[N]` selector. Failure Skills carry a `(scope)` tag so selection stays unambiguous when the same name lives in multiple scopes.
 
@@ -149,26 +151,22 @@ This section is for Codex and Claude Code agents after the user pastes the promp
    ```bash
    python3 /tmp/ufailure_once.py stats --since 90d
    ```
-
 4. Run the JSON variant once silently to build an `index -> skill-name` map for the user's reply:
 
    ```bash
    python3 /tmp/ufailure_once.py stats --since 90d --json
    ```
-
 5. The script's last line already asks `Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.` Do not ask again. Wait for the user's reply.
 6. For each selected skill, run dry-run first:
 
    ```bash
    python3 /tmp/ufailure_once.py remove <skill-name> --dry-run
    ```
-
 7. Only if every dry-run path is under a removable scope (`~/.codex/skills/<name>`, `~/.claude/skills/<name>`, or the project-local equivalents), run:
 
    ```bash
    python3 /tmp/ufailure_once.py remove <skill-name> --confirm
    ```
-
 8. **Delete `/tmp/ufailure_once.py`.** This step is mandatory — the one-shot promise depends on it.
 9. Report removed skills, skipped skills, and reasons for anything not removed. Show the script's `✓ Removed: <path>` lines verbatim.
 10. Keep the user-facing interaction minimal: show the ranked table from the script, wait for the reply, run the dry-run/confirm pair, show the result, delete the script, done.
