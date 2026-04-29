@@ -563,6 +563,70 @@ def test_discover_skills_skips_uninstalled_marketplace_plugins(tmp_path):
     assert plugin_entries[0].name == "alpha:s1"
 
 
+def test_discover_skills_handles_malformed_installed_plugins_json(tmp_path):
+    """Malformed installed_plugins.json must not crash plugin discovery."""
+    plugins_root = tmp_path / ".claude" / "plugins"
+    plugin_path = plugins_root / "marketplaces" / "alpha" / "skills" / "s1"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "SKILL.md").write_text("# a\n")
+    (plugins_root / "installed_plugins.json").write_text(
+        json.dumps({"version": 2, "plugins": [{"name": "alpha"}]}),
+        encoding="utf-8",
+    )
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    assert [s for s in skills if s.scope == SCOPE_PLUGIN] == []
+
+
+def test_discover_skills_prefers_exact_installed_name_over_prefix(monkeypatch, tmp_path):
+    """Exact installed plugin names win over shorter prefix matches."""
+    import ufailure_once
+
+    plugins_root = tmp_path / ".claude" / "plugins"
+    plugin_path = plugins_root / "marketplaces" / "caveman-extra" / "skills" / "s1"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "SKILL.md").write_text("# a\n")
+    monkeypatch.setattr(
+        ufailure_once,
+        "_read_installed_plugin_names",
+        lambda _: ["caveman", "caveman-extra"],
+    )
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
+    assert len(plugin_entries) == 1
+    assert plugin_entries[0].name == "caveman-extra:s1"
+
+
+def test_collect_usage_resolves_marketplace_subplugin_paths_to_canonical_name(tmp_path):
+    """Transcript paths for marketplace sub-plugins must use installed canonical names."""
+    plugins_root = tmp_path / ".claude" / "plugins"
+    skill_path = (
+        plugins_root / "marketplaces" / "nowledge-community"
+        / "nowledge-mem-browse-now-npx-skills" / "skills" / "browse-now"
+    )
+    skill_path.mkdir(parents=True)
+    (skill_path / "SKILL.md").write_text("# b\n")
+    _write_installed_plugins(plugins_root, "nowledge-mem")
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {"content": [{"text": f"cat {skill_path}/SKILL.md"}]},
+            },
+        ],
+    )
+
+    discovered = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+    known = {s.name for s in discovered}
+    result = collect_usage(home=tmp_path, known_skills=known, since_days=90)
+
+    assert result["nowledge-mem:browse-now"].uses == 1
+
+
 def test_collect_usage_counts_namespaced_plugin_skill_invocations(tmp_path):
     write_jsonl(
         tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
@@ -720,6 +784,25 @@ def test_collect_usage_still_counts_normal_mention(tmp_path):
     result = collect_usage(home=tmp_path, known_skills={"deep-research"}, since_days=90)
 
     assert result["deep-research"].uses == 1
+
+
+def test_collect_usage_counts_english_mention_before_question_mark(tmp_path):
+    """English skill mentions before '?' must still count."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [{"text": "Using writer skill?"}],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"writer"}, since_days=90)
+
+    assert result["writer"].uses == 1
 
 
 def test_collect_usage_counts_chinese_mention_before_full_width_punctuation(tmp_path):

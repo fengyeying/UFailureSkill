@@ -114,13 +114,14 @@ Logs and skill manifests, all read-only:
 - `~/.claude/projects/**/*.jsonl`
 - `~/.codex/skills/*/SKILL.md`
 - `~/.claude/skills/*/SKILL.md`
-- `~/.claude/plugins/**/skills/*/SKILL.md`
+- `~/.claude/plugins/installed_plugins.json`
+- `~/.claude/plugins/marketplaces/**/skills/*/SKILL.md` for installed plugin inventory
 - `<cwd>/.codex/skills/*/SKILL.md` and `<cwd>/.claude/skills/*/SKILL.md`
 
 Both Codex and Claude Code sessions are scanned. They invoke skills differently, so we count usage from four signals across all transcripts:
 
 1. **Claude Code structured invocations** — `tool_use` nodes with `name: "Skill"` and `input.skill: "<name>"`. Plugin namespacing (e.g. `superpowers:executing-plans`) is preserved so each plugin skill counts against its own row.
-2. **Codex SKILL.md path mentions** — Codex Desktop activates skills by `cat`-ing the SKILL.md path through `exec_command`. Any `/skills/<name>/SKILL.md` substring in a transcript is matched and resolved to the right scope (bare name for user/project paths, namespaced `<plugin>:<name>` for paths under `/plugins/`).
+2. **Codex SKILL.md path mentions** — Codex Desktop activates skills by `cat`-ing the SKILL.md path through `exec_command`. Any `/skills/<name>/SKILL.md` substring in a transcript is matched and resolved to the right scope (bare name for user/project paths, namespaced `<plugin>:<name>` for installed plugin paths). Cache path mentions in historical transcripts are recognized against installed plugin names but cache directories are not scanned as inventory.
 3. **Slash commands at the start of a string node** (e.g. `/writer draft this`).
 4. **Natural-language mentions** like `Using <skill> skill` and `[<skill>](.../SKILL.md)` Markdown links.
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-TEXT_MENTION_TERMINATOR_RE = r"(?=\s|[.,;:!)\]\}，。！？；：、）】》」』]|$)"
+TEXT_MENTION_TERMINATOR_RE = r"(?=\s|[.,;:!?)\]\}，。！？；：、）】》」』]|$)"
 USING_RE = re.compile(r"\bUsing\s+([A-Za-z0-9_.:-]+)\s+skill" + TEXT_MENTION_TERMINATOR_RE, re.IGNORECASE)
 CN_USING_RE = re.compile(r"使用(?:了)?\s*([A-Za-z0-9_.:-]+)\s*(?:skill|技能)" + TEXT_MENTION_TERMINATOR_RE, re.IGNORECASE)
 LEADING_SLASH_RE = re.compile(r"\A\s*/([A-Za-z0-9_.:-]+)\b")
@@ -111,13 +111,12 @@ def _resolve_path_skill(node: str, bare: str, match_start: int, known_skills: se
         # (skipping noise dirs and version segments).
         if "/.claude/plugins/marketplaces/" in prefix:
             after = prefix.split("/.claude/plugins/marketplaces/", 1)[1]
-            segments = [s for s in after.split("/") if s and s != "skills"]
-            for seg in reversed(segments):
-                if seg in _PLUGIN_PATH_NOISE or _VERSION_RE.match(seg):
-                    continue
-                result = f"{seg}:{bare}"
-                return result if result in known_skills else None
-            return None
+            installed_names = {known.split(":", 1)[0] for known in known_skills if ":" in known}
+            canonical_name = _find_canonical_plugin_name(after.split("/"), installed_names)
+            if canonical_name is None:
+                return None
+            result = f"{canonical_name}:{bare}"
+            return result if result in known_skills else None
         for known in known_skills:
             if ":" not in known:
                 continue
@@ -230,18 +229,38 @@ def _gather_user_dir_skills(roots: list[Path], scope: str) -> dict[str, Discover
 
 
 def _read_installed_plugin_names(plugins_root: Path) -> set[str]:
-    """Return the set of installed plugin names from installed_plugins.json.
-
-    Plugin keys have the form ``<name>@<marketplace>``; this returns just
-    the ``<name>`` part (before the ``@``).  Returns an empty set if the
-    config is missing or malformed.
-    """
+    """Return installed plugin names from installed_plugins.json."""
     config_path = plugins_root / "installed_plugins.json"
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return set()
-    return {k.split("@")[0] for k in config.get("plugins", {})}
+    if not isinstance(config, dict):
+        return set()
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        return set()
+    return {key.split("@", 1)[0] for key in plugins if isinstance(key, str)}
+
+
+def _canonical_installed_plugin_name(plugin_name: str, installed_names: Iterable[str]) -> str | None:
+    installed = {name for name in installed_names if isinstance(name, str) and name}
+    if plugin_name in installed:
+        return plugin_name
+    for installed_name in sorted(installed, key=len, reverse=True):
+        if plugin_name.startswith(installed_name + "-"):
+            return installed_name
+    return None
+
+
+def _find_canonical_plugin_name(segments: Iterable[str], installed_names: Iterable[str]) -> str | None:
+    for seg in reversed([s for s in segments if s]):
+        if seg in _PLUGIN_PATH_NOISE or _VERSION_RE.match(seg):
+            continue
+        canonical_name = _canonical_installed_plugin_name(seg, installed_names)
+        if canonical_name is not None:
+            return canonical_name
+    return None
 
 
 def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
@@ -272,24 +291,7 @@ def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
         except ValueError:
             continue
         skill_name = parts[skills_idx + 1]
-        # Walk backwards from skills/ to find the plugin/marketplace name,
-        # skipping noise dirs and version segments.
-        plugin_name: str | None = None
-        for i in range(skills_idx - 1, 0, -1):
-            seg = parts[i]
-            if seg in _PLUGIN_PATH_NOISE or _VERSION_RE.match(seg):
-                continue
-            plugin_name = seg
-            break
-        if not plugin_name:
-            continue
-        # Match against installed names, allowing sub-plugin variants
-        # (e.g. "nowledge-mem-claude-code-plugin" matches installed "nowledge-mem").
-        canonical_name: str | None = None
-        for installed in installed_names:
-            if plugin_name == installed or plugin_name.startswith(installed + "-"):
-                canonical_name = installed
-                break
+        canonical_name = _find_canonical_plugin_name(parts[:skills_idx], installed_names)
         if canonical_name is None:
             continue
         full_name = f"{canonical_name}:{skill_name}"
