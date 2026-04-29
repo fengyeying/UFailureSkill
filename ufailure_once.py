@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -151,10 +152,64 @@ def discover_user_skills(home: Path | None = None) -> dict[str, list[Path]]:
     return discovered
 
 
-BAR_PARTIALS = " ▏▎▍▌▋▊▉"
-BAR_FULL = "█"
 BAR_WIDTH = 16
-RULE = "─"
+
+
+@dataclass(frozen=True)
+class Glyphs:
+    """Bundle of single-character symbols used to render the report.
+
+    Two variants exist: a rich Unicode set for direct terminal use and an
+    ASCII-only set for agent harnesses whose renderers may swallow or
+    truncate non-ASCII output (e.g. Codex Desktop choking on the block-
+    drawing characters and emitting just the first letter of the report).
+    """
+
+    bar_full: str
+    bar_partials: str  # 8 chars indexed by remainder eighths
+    bar_zero: str
+    rule: str
+    ellipsis: str
+    warn: str
+    use_partials: bool
+
+
+RICH_GLYPHS = Glyphs(
+    bar_full="█",
+    bar_partials=" ▏▎▍▌▋▊▉",
+    bar_zero="·",
+    rule="─",
+    ellipsis="…",
+    warn="⚠",
+    use_partials=True,
+)
+
+ASCII_GLYPHS = Glyphs(
+    bar_full="#",
+    bar_partials="        ",  # ignored when use_partials is False
+    bar_zero=".",
+    rule="-",
+    ellipsis="..",
+    warn="!",
+    use_partials=False,
+)
+
+
+def select_glyphs(
+    *,
+    force_rich: bool = False,
+    force_ascii: bool = False,
+    isatty: bool | None = None,
+) -> Glyphs:
+    """Pick a glyph bundle: explicit flags win, otherwise default to ASCII
+    unless stdout is a real TTY. Agents typically run via captured pipes,
+    so the ASCII default keeps their renderings safe."""
+    if force_ascii:
+        return ASCII_GLYPHS
+    if force_rich:
+        return RICH_GLYPHS
+    tty = sys.stdout.isatty() if isatty is None else isatty
+    return RICH_GLYPHS if tty else ASCII_GLYPHS
 
 
 def parse_days(value: str) -> int:
@@ -188,28 +243,33 @@ def build_report_rows(
     return sorted(rows, key=lambda row: (-int(row["uses"]), str(row["skill"])))
 
 
-def render_bar(uses: int, max_uses: int, width: int = BAR_WIDTH) -> str:
+def render_bar(uses: int, max_uses: int, glyphs: Glyphs = RICH_GLYPHS, width: int = BAR_WIDTH) -> str:
     if max_uses <= 0:
         return " " * width
     if uses <= 0:
-        return "·" + " " * (width - 1)
-    eighths = max(1, round((uses / max_uses) * width * 8))
-    full, remainder = divmod(eighths, 8)
-    full = min(full, width)
-    bar = BAR_FULL * full
-    if remainder and full < width:
-        bar += BAR_PARTIALS[remainder]
+        return glyphs.bar_zero + " " * (width - 1)
+    if glyphs.use_partials:
+        eighths = max(1, round((uses / max_uses) * width * 8))
+        full, remainder = divmod(eighths, 8)
+        full = min(full, width)
+        bar = glyphs.bar_full * full
+        if remainder and full < width:
+            bar += glyphs.bar_partials[remainder]
+    else:
+        full = max(1, round((uses / max_uses) * width))
+        full = min(full, width)
+        bar = glyphs.bar_full * full
     return bar.ljust(width)
 
 
-def truncate_name(name: str, width: int) -> str:
+def truncate_name(name: str, width: int, glyphs: Glyphs = RICH_GLYPHS) -> str:
     if len(name) <= width:
         return name
-    if width <= 1:
+    if width <= len(glyphs.ellipsis):
         return name[:width]
-    head = (width - 1) // 2
-    tail = width - 1 - head
-    return f"{name[:head]}…{name[-tail:]}"
+    head = (width - len(glyphs.ellipsis)) // 2
+    tail = width - len(glyphs.ellipsis) - head
+    return f"{name[:head]}{glyphs.ellipsis}{name[-tail:]}"
 
 
 def render_relative(last_used: object, now: datetime) -> str:
@@ -229,7 +289,7 @@ def render_relative(last_used: object, now: datetime) -> str:
     return f"{delta} days ago"
 
 
-def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
+def print_text_report(rows: list[dict[str, object]], since_days: int, glyphs: Glyphs = RICH_GLYPHS) -> None:
     if not rows:
         print("No removable user skills found (scanned only ~/.codex/skills/ and ~/.claude/skills/).")
         return
@@ -237,31 +297,32 @@ def print_text_report(rows: list[dict[str, object]], since_days: int) -> None:
     max_uses = max((int(row["uses"]) for row in rows), default=0)
     actives = [row for row in rows if not row["candidate"]]
     candidates = [row for row in rows if row["candidate"]]
+    rule = glyphs.rule
 
-    print(f"  Local Skill Usage · Last {since_days} days")
+    print(f"  Local Skill Usage - Last {since_days} days")
     if not actives and candidates:
         print("  Note: only ~/.codex/skills/ and ~/.claude/skills/ are scanned.")
         print("        Plugin-installed skills (~/.claude/plugins/) are excluded; manage those with /plugin.")
-    print("  " + RULE * 76)
+    print("  " + rule * 76)
     print(f"  {'Skill':28}  {'Uses':>4}  {'Share':>6}  {'Bar':<16}  Last used")
-    print("  " + RULE * 76)
+    print("  " + rule * 76)
     for row in actives:
-        bar = render_bar(int(row["uses"]), max_uses)
+        bar = render_bar(int(row["uses"]), max_uses, glyphs)
         last = render_relative(row["last_used"], now)
-        name = truncate_name(str(row["skill"]), 28)
+        name = truncate_name(str(row["skill"]), 28, glyphs)
         print(f"  {name:28}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}")
     if candidates:
-        print("  " + RULE * 6 + " Failure Skills (uses <= 1) " + RULE * 38)
+        print("  " + rule * 6 + " Failure Skills (uses <= 1) " + rule * 38)
         for index, row in enumerate(candidates, start=1):
-            bar = render_bar(int(row["uses"]), max_uses)
+            bar = render_bar(int(row["uses"]), max_uses, glyphs)
             last = render_relative(row["last_used"], now)
             prefix = f"[{index}]"
-            name = truncate_name(str(row["skill"]), 23)
+            name = truncate_name(str(row["skill"]), 23, glyphs)
             paths_count = int(row.get("paths", 0))
-            suffix = f"  ⚠ {paths_count} paths" if paths_count > 1 else ""
+            suffix = f"  {glyphs.warn} {paths_count} paths" if paths_count > 1 else ""
             print(f"  {prefix:<4} {name:23}  {int(row['uses']):>4}  {float(row['percent']):>5.1f}%  {bar}  {last}{suffix}")
-    print("  " + RULE * 76)
-    print(f"  Total {len(rows)} · Active {len(actives)} · Failure Skills {len(candidates)}")
+    print("  " + rule * 76)
+    print(f"  Total {len(rows)} - Active {len(actives)} - Failure Skills {len(candidates)}")
     if candidates:
         print()
         print("  Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.")
@@ -314,6 +375,18 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subparsers.add_parser("stats")
     stats.add_argument("--since", default="90d")
     stats.add_argument("--json", action="store_true")
+    glyph_group = stats.add_mutually_exclusive_group()
+    glyph_group.add_argument(
+        "--ascii",
+        dest="ascii_only",
+        action="store_true",
+        help="Force ASCII-only output (safe for agent harnesses).",
+    )
+    glyph_group.add_argument(
+        "--rich",
+        action="store_true",
+        help="Force Unicode block-character output (default when stdout is a TTY).",
+    )
 
     remove = subparsers.add_parser("remove")
     remove.add_argument("skill")
@@ -335,7 +408,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.json:
             print(json.dumps(rows, ensure_ascii=False, indent=2))
         else:
-            print_text_report(rows, since_days=since_days)
+            glyphs = select_glyphs(force_rich=args.rich, force_ascii=args.ascii_only)
+            print_text_report(rows, since_days=since_days, glyphs=glyphs)
         return 0
 
     if args.command == "remove":

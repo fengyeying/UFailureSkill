@@ -47,27 +47,35 @@ python3 /tmp/ufailure_once.py remove <skill-name> --confirm
 
 ## What It Looks Like
 
-The script's `stats` text output is the visualization. Example:
+The script's `stats` text output is the visualization. When piped (the default for agent harnesses) it emits pure ASCII so renderers can't mangle it:
 
 ```text
-  Local Skill Usage · Last 90 days
-  ────────────────────────────────────────────────────────────────────────────
+  Local Skill Usage - Last 90 days
+  ----------------------------------------------------------------------------
   Skill                         Uses   Share  Bar               Last used
-  ────────────────────────────────────────────────────────────────────────────
-  brainstorming                   23   47.9%  ████████████████  2 days ago
-  writing-plans                   12   25.0%  ████████▌         5 days ago
-  test-driven-development          8   16.7%  █████▋            12 days ago
-  debugging                        3    6.2%  ██▏               23 days ago
-  ────── Failure Skills (uses <= 1) ──────────────────────────────────────
-  [1]  writer                      1    2.1%  ▏                 61 days ago
-  [2]  unused                      0    0.0%  ·                 Never used
-  ────────────────────────────────────────────────────────────────────────────
-  Total 6 · Active 4 · Failure Skills 2
+  ----------------------------------------------------------------------------
+  brainstorming                   23   47.9%  ################  2 days ago
+  writing-plans                   12   25.0%  ########          5 days ago
+  test-driven-development          8   16.7%  ######            12 days ago
+  debugging                        3    6.2%  ##                23 days ago
+  ------ Failure Skills (uses <= 1) --------------------------------------
+  [1]  writer                      1    2.1%  #                 61 days ago
+  [2]  unused                      0    0.0%  .                 Never used
+  ----------------------------------------------------------------------------
+  Total 6 - Active 4 - Failure Skills 2
 
   Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.
 ```
 
-The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run with 1/8-block resolution. `·` marks zero uses. Low-use or unused skills are grouped under `Failure Skills`.
+When run directly in a terminal (TTY detected), the same report renders with Unicode block-characters for finer-grained bars:
+
+```text
+  brainstorming                   23   47.9%  ████████████████  2 days ago
+  writing-plans                   12   25.0%  ████████▌         5 days ago
+  test-driven-development          8   16.7%  █████▋            12 days ago
+```
+
+The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses. Low-use or unused skills are grouped under `Failure Skills`. Force one mode with `--ascii` or `--rich`.
 
 After the user picks `1,2`, the agent shows the script's removal lines verbatim:
 

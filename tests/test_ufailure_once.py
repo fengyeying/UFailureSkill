@@ -282,3 +282,63 @@ def test_parse_days_rejects_non_positive():
         parse_days("-7d")
     with pytest.raises(ValueError):
         parse_days("0")
+
+
+from ufailure_once import (
+    ASCII_GLYPHS,
+    RICH_GLYPHS,
+    render_bar,
+    select_glyphs,
+)
+
+
+def test_select_glyphs_defaults_to_ascii_when_not_a_tty():
+    glyphs = select_glyphs(isatty=False)
+    assert glyphs is ASCII_GLYPHS
+
+
+def test_select_glyphs_uses_rich_when_tty():
+    glyphs = select_glyphs(isatty=True)
+    assert glyphs is RICH_GLYPHS
+
+
+def test_select_glyphs_force_ascii_overrides_tty():
+    glyphs = select_glyphs(force_ascii=True, isatty=True)
+    assert glyphs is ASCII_GLYPHS
+
+
+def test_select_glyphs_force_rich_overrides_pipe():
+    glyphs = select_glyphs(force_rich=True, isatty=False)
+    assert glyphs is RICH_GLYPHS
+
+
+def test_print_text_report_ascii_mode_emits_only_ascii():
+    rows = [
+        {"skill": "active", "uses": 5, "percent": 71.4, "last_used": None, "candidate": False, "paths": 1},
+        {"skill": "lonely", "uses": 0, "percent": 0.0, "last_used": None, "candidate": True, "paths": 2},
+    ]
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        print_text_report(rows, since_days=90, glyphs=ASCII_GLYPHS)
+    out = buf.getvalue()
+
+    assert out.isascii(), f"non-ASCII char leaked: {out!r}"
+    assert "#" in out  # ASCII bar
+    assert "!" in out  # ASCII warn glyph for the dual-path candidate
+    assert "-" * 10 in out  # ASCII rule
+
+
+def test_render_bar_ascii_mode_uses_only_ascii():
+    bar = render_bar(uses=3, max_uses=10, glyphs=ASCII_GLYPHS, width=10)
+    assert bar.isascii()
+    assert "#" in bar
+    assert "█" not in bar
+
+
+def test_truncate_name_ascii_mode_uses_double_dot():
+    long = "superpowers-test-driven-development-extended"
+    truncated = truncate_name(long, 23, ASCII_GLYPHS)
+    assert truncated.isascii()
+    assert ".." in truncated
+    assert "…" not in truncated
+    assert len(truncated) == 23
