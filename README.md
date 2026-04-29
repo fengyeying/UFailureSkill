@@ -51,31 +51,40 @@ The script's `stats` text output is the visualization. When piped (the default f
 
 ```text
   Local Skill Usage - Last 90 days
-  ----------------------------------------------------------------------------
-  Skill                         Uses   Share  Bar               Last used
-  ----------------------------------------------------------------------------
-  brainstorming                   23   47.9%  ################  2 days ago
-  writing-plans                   12   25.0%  ########          5 days ago
-  test-driven-development          8   16.7%  ######            12 days ago
-  debugging                        3    6.2%  ##                23 days ago
-  ------ Failure Skills (uses <= 1) --------------------------------------
-  [1]  writer                      1    2.1%  #                 61 days ago
-  [2]  unused                      0    0.0%  .                 Never used
-  ----------------------------------------------------------------------------
-  Total 6 - Active 4 - Failure Skills 2
+  Scope codes: user = ~/.claude/skills/  proj = ./.claude/skills/  plug = plugin (read-only, manage via /plugin).
+  --------------------------------------------------------------------------------
+  Skill                         Scope  Uses   Share  Bar               Last used
+  --------------------------------------------------------------------------------
+  superpowers:executing-plans   plug      2   66.7%  ################  Today
+  superpowers:writing-plans     plug      1   33.3%  ########          Today
+  ... 37 unused plugin skills hidden (use --all to show)
+  ------ Failure Skills (removable, uses <= 1) -----------------------------------
+  [1]  ask-questi..erspecified  user      0    0.0%  .                 Never used
+  [2]  deep-research            user      0    0.0%  .                 Never used
+  [3]  frontend-design          user      0    0.0%  .                 Never used
+  --------------------------------------------------------------------------------
+  Total 42 - Used 2 - Failure Skills 3 - Plugin 39 (read-only)
 
   Which Failure Skills should be removed? Reply with numbers (for example 1,2), all, or skip.
 ```
 
-When run directly in a terminal (TTY detected), the same report renders with Unicode block-characters for finer-grained bars:
+The same report renders with Unicode block-characters for finer-grained bars when stdout is a TTY (or with `--rich`). Force ASCII regardless with `--ascii`.
 
-```text
-  brainstorming                   23   47.9%  ████████████████  2 days ago
-  writing-plans                   12   25.0%  ████████▌         5 days ago
-  test-driven-development          8   16.7%  █████▋            12 days ago
-```
+## Scope Column
 
-The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses. Low-use or unused skills are grouped under `Failure Skills`. Force one mode with `--ascii` or `--rich`.
+Each skill carries a 4-letter scope code so you can see at a glance where it lives and whether you can act on it:
+
+| Code | Origin | Removable? |
+|------|--------|------------|
+| `user` | `~/.codex/skills/<name>/` or `~/.claude/skills/<name>/` | yes |
+| `proj` | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/` | yes |
+| `plug` | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
+
+Plugin skills are listed for awareness (and so their usage is counted correctly when invoked via the `Skill` tool), but they are never deletion candidates and never get an `[N]` selector.
+
+By default the text report hides plugin skills with zero uses to keep things readable; pass `--all` to see the full inventory.
+
+The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses. Low-use removable skills are grouped under `Failure Skills` with `[N]` selectors for the deletion question.
 
 After the user picks `1,2`, the agent shows the script's removal lines verbatim:
 

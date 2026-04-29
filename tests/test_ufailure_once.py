@@ -243,16 +243,17 @@ from contextlib import redirect_stdout
 from ufailure_once import print_text_report
 
 
-def test_print_text_report_shows_plugin_hint_when_zero_active():
+def test_print_text_report_shows_scope_hint_when_plugin_rows_present():
     rows = [
-        {"skill": "lonely", "uses": 0, "percent": 0.0, "last_used": None, "candidate": True, "paths": 1},
+        {"skill": "lonely", "uses": 0, "percent": 0.0, "last_used": None, "candidate": True, "paths": 1, "scope": "user", "removable": True},
+        {"skill": "superpowers:brainstorming", "uses": 5, "percent": 100.0, "last_used": None, "candidate": False, "paths": 1, "scope": "plug", "removable": False},
     ]
     buf = io.StringIO()
     with redirect_stdout(buf):
         print_text_report(rows, since_days=90)
     out = buf.getvalue()
 
-    assert "plugin" in out.lower()
+    assert "plug" in out.lower()
     assert "/plugin" in out
 
 
@@ -342,3 +343,126 @@ def test_truncate_name_ascii_mode_uses_double_dot():
     assert ".." in truncated
     assert "…" not in truncated
     assert len(truncated) == 23
+
+
+from ufailure_once import (
+    SCOPE_PLUGIN,
+    SCOPE_PROJECT,
+    SCOPE_USER,
+    discover_skills,
+)
+
+
+def test_discover_skills_labels_user_global_scope(tmp_path):
+    (tmp_path / ".claude" / "skills" / "writer").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "writer" / "SKILL.md").write_text("# w\n", encoding="utf-8")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    assert len(skills) == 1
+    assert skills[0].name == "writer"
+    assert skills[0].scope == SCOPE_USER
+    assert skills[0].removable is True
+
+
+def test_discover_skills_finds_project_local_skills(tmp_path):
+    project = tmp_path / "myproj"
+    (project / ".claude" / "skills" / "linter").mkdir(parents=True)
+    (project / ".claude" / "skills" / "linter" / "SKILL.md").write_text("# l\n", encoding="utf-8")
+    home = tmp_path / "fakehome"
+    home.mkdir()
+
+    skills = discover_skills(home=home, project_root=project)
+    by_scope = {(s.scope, s.name): s for s in skills}
+
+    assert (SCOPE_PROJECT, "linter") in by_scope
+    assert by_scope[(SCOPE_PROJECT, "linter")].removable is True
+
+
+def test_discover_skills_skips_project_when_same_as_home(tmp_path):
+    (tmp_path / ".claude" / "skills" / "writer").mkdir(parents=True)
+    (tmp_path / ".claude" / "skills" / "writer" / "SKILL.md").write_text("# w\n", encoding="utf-8")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path)
+
+    # Only one entry, in user scope (not duplicated as project).
+    assert len(skills) == 1
+    assert skills[0].scope == SCOPE_USER
+
+
+def test_discover_skills_finds_plugin_skills_with_namespaced_names(tmp_path):
+    plugin_path = tmp_path / ".claude" / "plugins" / "cache" / "marketplace" / "superpowers" / "5.0.6" / "skills" / "brainstorming"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "SKILL.md").write_text("# b\n", encoding="utf-8")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
+    assert len(plugin_entries) == 1
+    assert plugin_entries[0].name == "superpowers:brainstorming"
+    assert plugin_entries[0].removable is False
+
+
+def test_discover_skills_finds_plugin_skills_in_marketplace_layout(tmp_path):
+    plugin_path = tmp_path / ".claude" / "plugins" / "marketplaces" / "marketplace" / "external_plugins" / "imessage" / "skills" / "access"
+    plugin_path.mkdir(parents=True)
+    (plugin_path / "SKILL.md").write_text("# a\n", encoding="utf-8")
+
+    skills = discover_skills(home=tmp_path, project_root=tmp_path / "elsewhere")
+
+    plugin_entries = [s for s in skills if s.scope == SCOPE_PLUGIN]
+    assert len(plugin_entries) == 1
+    assert plugin_entries[0].name == "imessage:access"
+
+
+def test_collect_usage_counts_namespaced_plugin_skill_invocations(tmp_path):
+    write_jsonl(
+        tmp_path / ".claude" / "projects" / "p" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "tool_use", "name": "Skill", "input": {"skill": "superpowers:brainstorming"}},
+                    ],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"superpowers:brainstorming"}, since_days=90)
+
+    assert result["superpowers:brainstorming"].uses == 1
+
+
+def test_find_removable_skill_paths_rejects_namespaced_plugin_names(tmp_path):
+    # Even if a path were somehow discovered, the colon in the name should
+    # short-circuit removal.
+    paths = find_removable_skill_paths("superpowers:brainstorming", home=tmp_path)
+    assert paths == []
+
+
+def test_build_report_rows_marks_plugin_skills_non_candidate_even_when_low_use():
+    usage = {
+        "superpowers:brainstorming": Usage("superpowers:brainstorming", uses=0, last_used=None),
+        "writer": Usage("writer", uses=0, last_used=None),
+    }
+    skill_scopes = {
+        "superpowers:brainstorming": SCOPE_PLUGIN,
+        "writer": SCOPE_USER,
+    }
+    removable = {"writer"}
+
+    rows = build_report_rows(
+        usage,
+        candidate_threshold=1,
+        skill_scopes=skill_scopes,
+        removable_skills=removable,
+    )
+    by_skill = {row["skill"]: row for row in rows}
+
+    assert by_skill["writer"]["candidate"] is True
+    assert by_skill["superpowers:brainstorming"]["candidate"] is False
+    assert by_skill["superpowers:brainstorming"]["scope"] == SCOPE_PLUGIN
+    assert by_skill["superpowers:brainstorming"]["removable"] is False
