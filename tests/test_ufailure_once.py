@@ -238,7 +238,7 @@ def test_build_report_rows_includes_paths_count(tmp_path):
 
 
 import io
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 from ufailure_once import print_text_report
 
@@ -367,17 +367,19 @@ def test_truncate_name_uses_ellipsis_for_long_names():
     assert truncate_name("a" * 24, 23).endswith("a") and "…" in truncate_name("a" * 24, 23)
 
 
+import argparse
+
 import pytest
 
 from ufailure_once import parse_days
 
 
 def test_parse_days_rejects_non_positive():
-    with pytest.raises(ValueError):
+    with pytest.raises(argparse.ArgumentTypeError):
         parse_days("0d")
-    with pytest.raises(ValueError):
+    with pytest.raises(argparse.ArgumentTypeError):
         parse_days("-7d")
-    with pytest.raises(ValueError):
+    with pytest.raises(argparse.ArgumentTypeError):
         parse_days("0")
 
 
@@ -562,3 +564,387 @@ def test_build_report_rows_marks_plugin_skills_non_candidate_even_when_low_use()
     assert by_skill["superpowers:brainstorming"]["candidate"] is False
     assert by_skill["superpowers:brainstorming"]["scope"] == SCOPE_PLUGIN
     assert by_skill["superpowers:brainstorming"]["removable"] is False
+
+
+# ---------------------------------------------------------------------------
+# T4: Tests for all 11 bug fixes
+# ---------------------------------------------------------------------------
+
+
+# 1. collect_usage crash resilience
+
+def test_collect_usage_skips_unreadable_file(monkeypatch, tmp_path):
+    """Bug 1: read_text OSError must not crash collect_usage."""
+    from ufailure_once import collect_usage
+
+    log = tmp_path / ".codex" / "sessions" / "s.jsonl"
+    write_jsonl(log, [{"timestamp": "2026-04-28T00:00:00Z", "type": "x"}])
+
+    real_read_text = Path.read_text
+
+    def broken_read_text(self, *a, **kw):
+        if str(self) == str(log):
+            raise OSError("permission denied")
+        return real_read_text(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "read_text", broken_read_text)
+
+    result = collect_usage(home=tmp_path, known_skills={"foo"}, since_days=90)
+
+    assert result["foo"].uses == 0  # no crash, no data
+
+
+def test_collect_usage_skips_non_object_json_lines(tmp_path):
+    """Bug 2 (New): non-dict JSON lines must be skipped, not crash."""
+    from ufailure_once import collect_usage
+
+    log = tmp_path / ".codex" / "sessions" / "s.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "[1,2]\n"
+        '"just a string"\n'
+        "42\n"
+        "null\n"
+        "true\n",
+        encoding="utf-8",
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"foo"}, since_days=90)
+
+    assert result["foo"].uses == 0  # no crash
+
+
+# 2. parse_days error handling
+
+def test_parse_days_rejects_non_numeric():
+    """Bug 4: non-numeric input raises ArgumentTypeError."""
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_days("abc")
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_days("xd")
+
+
+def test_parse_days_accepts_plain_number():
+    """Bug 4: '30' and '30d' both return 30."""
+    assert parse_days("30") == 30
+    assert parse_days("30d") == 30
+
+
+# 3. USING_RE false positive fix
+
+def test_collect_usage_rejects_skill_suffix_in_mention(tmp_path):
+    """Bug 3: 'Using deep-research skill-now' must NOT count as using
+    deep-research.  The trailing word boundary was the old bug."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [{"text": "Using deep-research skill-now is confusing"}],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"deep-research"}, since_days=90)
+
+    assert result["deep-research"].uses == 0
+
+
+def test_collect_usage_still_counts_normal_mention(tmp_path):
+    """The fix must not break normal 'Using X skill' detection."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [{"text": "Using deep-research skill to investigate."}],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"deep-research"}, since_days=90)
+
+    assert result["deep-research"].uses == 1
+
+
+def test_collect_usage_counts_chinese_mention_before_full_width_punctuation(tmp_path):
+    """Chinese skill mentions before full-width punctuation must still count."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [{"text": "使用了 writer 技能。"}],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(home=tmp_path, known_skills={"writer"}, since_days=90)
+
+    assert result["writer"].uses == 1
+
+
+# 4. _resolve_path_skill precision
+
+def test_resolve_path_skill_rejects_non_claude_plugins_path(tmp_path):
+    """Bug 5: a path with '/plugins/' that is NOT under /.claude/plugins/
+    must resolve as bare user skill, not be rejected as unknown plugin."""
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [
+                        {
+                            "text": (
+                                "cat /tmp/plugins/project/"
+                                ".codex/skills/brainstorming/SKILL.md"
+                            )
+                        },
+                    ],
+                },
+            },
+        ],
+    )
+
+    result = collect_usage(
+        home=tmp_path,
+        known_skills={"brainstorming"},
+        since_days=90,
+    )
+
+    assert result["brainstorming"].uses == 1
+
+
+# 5. Same-name skill collision
+
+def test_discover_skills_merges_same_name_across_scopes(tmp_path):
+    """New Bug 1: same-named skill in user + project scopes must have
+    their paths merged (via paths_by_skill in main)."""
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    (home / ".claude" / "skills" / "dup").mkdir(parents=True)
+    (home / ".claude" / "skills" / "dup" / "SKILL.md").write_text("# h\n")
+    (project / ".claude" / "skills" / "dup").mkdir(parents=True)
+    (project / ".claude" / "skills" / "dup" / "SKILL.md").write_text("# p\n")
+
+    skills = discover_skills(home=home, project_root=project)
+
+    dups = [s for s in skills if s.name == "dup"]
+    assert len(dups) == 2  # user + project entries
+    all_paths = []
+    for s in dups:
+        all_paths.extend(s.paths)
+    assert (home / ".claude" / "skills" / "dup") in all_paths
+    assert (project / ".claude" / "skills" / "dup") in all_paths
+
+
+def test_build_report_rows_does_not_offer_multi_path_skill_for_removal(tmp_path):
+    """A single selector must not delete multiple same-name skill directories."""
+    usage = {"dup": Usage("dup", uses=0, last_used=None)}
+    paths_by_skill = {
+        "dup": [
+            tmp_path / "home" / ".claude" / "skills" / "dup",
+            tmp_path / "project" / ".claude" / "skills" / "dup",
+        ],
+    }
+
+    rows = build_report_rows(
+        usage,
+        candidate_threshold=1,
+        paths_by_skill=paths_by_skill,
+        removable_skills={"dup"},
+    )
+
+    assert rows[0]["candidate"] is False
+
+
+def test_remove_skill_rejects_ambiguous_multi_path_match(tmp_path):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    home_skill = home / ".claude" / "skills" / "dup"
+    project_skill = project / ".claude" / "skills" / "dup"
+    home_skill.mkdir(parents=True)
+    project_skill.mkdir(parents=True)
+    (home_skill / "SKILL.md").write_text("# h\n")
+    (project_skill / "SKILL.md").write_text("# p\n")
+
+    with pytest.raises(ValueError, match="multiple removable paths"):
+        remove_skill("dup", confirm=True, home=home, project_root=project)
+
+    assert home_skill.exists()
+    assert project_skill.exists()
+
+# 6. Remove skill name validation
+
+def test_find_removable_skill_paths_rejects_slash_in_name(tmp_path):
+    """New Bug 3: skill names containing '/' must be rejected early."""
+    codex_root = tmp_path / ".codex" / "skills" / "foo" / "bar"
+    codex_root.mkdir(parents=True)
+    (codex_root / "SKILL.md").write_text("# f\n")
+
+    assert find_removable_skill_paths("foo/bar", home=tmp_path) == []
+
+
+# 7. render_bar edge cases
+
+def test_render_bar_zero_width():
+    """New Bug 4: width=0 must return empty string."""
+    assert render_bar(0, 10, width=0) == ""
+
+
+def test_render_bar_zero_width_with_uses():
+    """New Bug 4: width=0 with nonzero uses must also return empty."""
+    assert render_bar(5, 10, width=0) == ""
+
+
+def test_render_bar_single_use():
+    """Single use, single max → full bar."""
+    bar = render_bar(1, 1, width=10)
+    assert bar == RICH_GLYPHS.bar_full * 10
+
+
+# 8. main CLI flow
+
+def test_main_stats_json_output(tmp_path, monkeypatch):
+    """main(['stats', '--json']) must emit valid JSON with expected keys."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    (tmp_path / ".codex" / "skills" / "alpha").mkdir(parents=True)
+    (tmp_path / ".codex" / "skills" / "alpha" / "SKILL.md").write_text("# a\n")
+    write_jsonl(
+        tmp_path / ".codex" / "sessions" / "s.jsonl",
+        [
+            {
+                "timestamp": "2026-04-28T00:00:00Z",
+                "payload": {
+                    "content": [{"text": "Using alpha skill for this."}],
+                },
+            },
+        ],
+    )
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["stats", "--since", "90d", "--json"])
+
+    assert rc == 0
+    data = json.loads(buf.getvalue())
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    first = data[0]
+    assert "skill" in first
+    assert "uses" in first
+    assert "percent" in first
+    assert "candidate" in first
+
+
+def test_main_stats_empty_skills(tmp_path, monkeypatch):
+    """main(['stats']) on an empty skill dir must succeed."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["stats", "--since", "90d"])
+
+    assert rc == 0
+
+
+def test_main_remove_dry_run(tmp_path, monkeypatch):
+    """main(['remove', ..., '--dry-run']) must not delete and must say so."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    skill_dir = tmp_path / ".codex" / "skills" / "gone"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# g\n")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["remove", "gone", "--dry-run"])
+
+    assert rc == 0
+    assert "Would remove" in buf.getvalue()
+    assert skill_dir.exists()  # not deleted
+
+
+def test_main_remove_confirm_deletes(tmp_path, monkeypatch):
+    """main(['remove', ..., '--confirm']) must delete the skill dir."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    skill_dir = tmp_path / ".codex" / "skills" / "gone"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# g\n")
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["remove", "gone", "--confirm"])
+
+    assert rc == 0
+    assert "Removed" in buf.getvalue()
+    assert not skill_dir.exists()
+
+
+def test_main_remove_no_skill_found(tmp_path, monkeypatch):
+    """Removing a nonexistent skill must return exit code 1."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
+
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = main(["remove", "nonexistent", "--dry-run"])
+
+    assert rc == 1
+    assert "no removable" in buf.getvalue().lower()
+
+
+def test_main_remove_rejects_ambiguous_multi_path_match(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    project = tmp_path / "project"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: project))
+
+    home_skill = home / ".claude" / "skills" / "dup"
+    project_skill = project / ".claude" / "skills" / "dup"
+    home_skill.mkdir(parents=True)
+    project_skill.mkdir(parents=True)
+    (home_skill / "SKILL.md").write_text("# h\n")
+    (project_skill / "SKILL.md").write_text("# p\n")
+
+    out = io.StringIO()
+    err = io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        rc = main(["remove", "dup", "--dry-run"])
+
+    assert rc == 1
+    assert "multiple removable paths" in err.getvalue()
+    assert home_skill.exists()
+    assert project_skill.exists()
+
+
+# 9. remove_skill expected_paths (Design 6)
+
+def test_remove_skill_aborts_on_path_mismatch(tmp_path):
+    """If expected_paths diverges from actual, remove_skill raises ValueError."""
+    skill_dir = tmp_path / ".codex" / "skills" / "real"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text("# r\n")
+
+    with pytest.raises(ValueError, match="path mismatch"):
+        remove_skill(
+            "real",
+            confirm=True,
+            home=tmp_path,
+            expected_paths=[tmp_path / "nonexistent"],
+        )

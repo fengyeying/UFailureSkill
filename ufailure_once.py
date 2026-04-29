@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-USING_RE = re.compile(r"\bUsing\s+([A-Za-z0-9_.:-]+)\s+skill\b", re.IGNORECASE)
-CN_USING_RE = re.compile(r"使用(?:了)?\s*([A-Za-z0-9_.:-]+)\s*(?:skill|技能)", re.IGNORECASE)
+TEXT_MENTION_TERMINATOR_RE = r"(?=\s|[.,;:!)\]\}，。！？；：、）】》」』]|$)"
+USING_RE = re.compile(r"\bUsing\s+([A-Za-z0-9_.:-]+)\s+skill" + TEXT_MENTION_TERMINATOR_RE, re.IGNORECASE)
+CN_USING_RE = re.compile(r"使用(?:了)?\s*([A-Za-z0-9_.:-]+)\s*(?:skill|技能)" + TEXT_MENTION_TERMINATOR_RE, re.IGNORECASE)
 LEADING_SLASH_RE = re.compile(r"\A\s*/([A-Za-z0-9_.:-]+)\b")
 MD_SKILL_RE = re.compile(r"\[\$?([A-Za-z0-9_.:-]+)\]\([^)]*/SKILL\.md\)")
 # Codex Desktop activates skills by `cat`ing the SKILL.md path through
@@ -63,6 +64,8 @@ def iter_json_nodes(value: Any) -> Iterable[Any]:
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
+    if not isinstance(value, str):
+        return None
     if not value:
         return None
     try:
@@ -103,7 +106,7 @@ def _resolve_path_skill(node: str, bare: str, match_start: int, known_skills: se
     against both a plugin entry and a same-named user entry.
     """
     prefix = node[:match_start]
-    if "/plugins/" in prefix:
+    if "/.claude/plugins/" in prefix:
         for known in known_skills:
             if ":" not in known:
                 continue
@@ -149,10 +152,17 @@ def collect_usage(home: Path | None, known_skills: set[str], since_days: int) ->
             file_mtime = None
         if file_mtime is not None and file_mtime < cutoff:
             continue
-        for line in log_file.read_text(errors="ignore").splitlines():
+        try:
+            text = log_file.read_text(errors="ignore")
+        except OSError as e:
+            print(f"  Skipping {log_file}: {e}", file=sys.stderr)
+            continue
+        for line in text.splitlines():
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if not isinstance(row, dict):
                 continue
             ts = parse_timestamp(row.get("timestamp") or row.get("updated_at")) or file_mtime
             if ts is not None and ts < cutoff:
@@ -342,9 +352,12 @@ def select_glyphs(
 
 def parse_days(value: str) -> int:
     raw = value[:-1] if value.endswith("d") else value
-    days = int(raw)
+    try:
+        days = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid --since value: {value!r}")
     if days <= 0:
-        raise ValueError(f"--since must be a positive number of days, got {value!r}")
+        raise argparse.ArgumentTypeError(f"--since must be a positive number of days, got {value!r}")
     return days
 
 
@@ -357,15 +370,22 @@ def build_report_rows(
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     total_uses = sum(entry.uses for entry in usage.values())
+    has_path_inventory = paths_by_skill is not None
     paths_by_skill = paths_by_skill or {}
     skill_scopes = skill_scopes or {}
     removable_skills = removable_skills if removable_skills is not None else set(usage)
     for entry in usage.values():
         percent = (entry.uses / total_uses * 100) if total_uses else 0.0
         is_removable = entry.skill in removable_skills
-        # Only removable skills with low usage are deletion candidates;
-        # plugin skills are never candidates because the user can't act on them here.
-        is_candidate = is_removable and entry.uses <= candidate_threshold
+        paths_count = len(paths_by_skill.get(entry.skill, []))
+        # Only single-path removable skills with low usage are deletion candidates;
+        # multi-path matches require manual cleanup so one selector cannot delete
+        # multiple same-named directories.
+        is_candidate = (
+            is_removable
+            and entry.uses <= candidate_threshold
+            and (not has_path_inventory or paths_count == 1)
+        )
         rows.append(
             {
                 "skill": entry.skill,
@@ -373,7 +393,7 @@ def build_report_rows(
                 "percent": round(percent, 1),
                 "last_used": entry.last_used.isoformat() if entry.last_used else None,
                 "candidate": is_candidate,
-                "paths": len(paths_by_skill.get(entry.skill, [])),
+                "paths": paths_count,
                 "scope": skill_scopes.get(entry.skill, SCOPE_USER),
                 "removable": is_removable,
             }
@@ -382,6 +402,8 @@ def build_report_rows(
 
 
 def render_bar(uses: int, max_uses: int, glyphs: Glyphs = RICH_GLYPHS, width: int = BAR_WIDTH) -> str:
+    if width <= 0:
+        return ""
     if max_uses <= 0:
         return " " * width
     if uses <= 0:
@@ -578,6 +600,8 @@ def find_removable_skill_paths(
     """Plugin-namespaced names (containing ':') are never removable here."""
     if ":" in skill:
         return []
+    if "/" in skill:
+        return []
     paths: list[Path] = []
     for root in user_skill_roots(home, project_root):
         candidate = root / skill
@@ -594,9 +618,18 @@ def find_removable_skill_paths(
 
 
 def remove_skill(
-    skill: str, confirm: bool, home: Path | None = None, project_root: Path | None = None
+    skill: str, confirm: bool, home: Path | None = None, project_root: Path | None = None,
+    expected_paths: list[Path] | None = None,
 ) -> list[Path]:
     paths = find_removable_skill_paths(skill, home, project_root)
+    if expected_paths is not None and sorted(paths) != sorted(expected_paths):
+        raise ValueError(
+            f"path mismatch: expected {expected_paths}, found {paths}"
+        )
+    if len(paths) > 1:
+        raise ValueError(
+            f"multiple removable paths match {skill!r}; remove one path manually: {paths}"
+        )
     if confirm:
         for path in paths:
             shutil.rmtree(path)
@@ -608,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     stats = subparsers.add_parser("stats")
-    stats.add_argument("--since", default="90d")
+    stats.add_argument("--since", default="90d", type=parse_days)
     stats.add_argument("--json", action="store_true")
     glyph_group = stats.add_mutually_exclusive_group()
     glyph_group.add_argument(
@@ -636,11 +669,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "stats":
-        since_days = parse_days(args.since)
+        since_days = args.since
         discovered = discover_skills()
         known = {s.name for s in discovered}
-        paths_by_skill = {s.name: s.paths for s in discovered}
-        skill_scopes = {s.name: s.scope for s in discovered}
+        paths_by_skill: dict[str, list[Path]] = {}
+        for s in discovered:
+            paths_by_skill.setdefault(s.name, []).extend(s.paths)
+        skill_scopes: dict[str, str] = {}
+        for s in discovered:
+            skill_scopes.setdefault(s.name, s.scope)
         removable_skills = {s.name for s in discovered if s.removable}
         usage = collect_usage(home=None, known_skills=known, since_days=since_days)
         rows = build_report_rows(
@@ -660,14 +697,35 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "remove":
         if args.dry_run == args.confirm:
             parser.error("choose exactly one of --dry-run or --confirm")
-        paths = remove_skill(args.skill, confirm=args.confirm, home=None)
-        if not paths:
-            print(f"  ✗ {args.skill}: no removable user skill found")
-            return 1
-        glyph = "✓" if args.confirm else "·"
-        action = "Removed" if args.confirm else "Would remove"
-        for path in paths:
-            print(f"  {glyph} {action}: {path}")
+        if args.confirm:
+            # Dry-run first to capture expected paths for atomicity check
+            try:
+                expected_paths = remove_skill(args.skill, confirm=False, home=None)
+            except ValueError as exc:
+                print(f"  ✗ {args.skill}: {exc}", file=sys.stderr)
+                return 1
+            if not expected_paths:
+                print(f"  ✗ {args.skill}: no removable user skill found")
+                return 1
+            try:
+                paths = remove_skill(args.skill, confirm=True, home=None,
+                                     expected_paths=expected_paths)
+            except ValueError as exc:
+                print(f"  ✗ {args.skill}: {exc}", file=sys.stderr)
+                return 1
+            for path in paths:
+                print(f"  ✓ Removed: {path}")
+        else:
+            try:
+                paths = remove_skill(args.skill, confirm=False, home=None)
+            except ValueError as exc:
+                print(f"  ✗ {args.skill}: {exc}", file=sys.stderr)
+                return 1
+            if not paths:
+                print(f"  ✗ {args.skill}: no removable user skill found")
+                return 1
+            for path in paths:
+                print(f"  · Would remove: {path}")
         return 0
 
     return 0
