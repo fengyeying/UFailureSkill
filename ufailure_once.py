@@ -107,6 +107,17 @@ def _resolve_path_skill(node: str, bare: str, match_start: int, known_skills: se
     """
     prefix = node[:match_start]
     if "/.claude/plugins/" in prefix:
+        # Marketplace paths: walk backwards from skills/ to find plugin name
+        # (skipping noise dirs and version segments).
+        if "/.claude/plugins/marketplaces/" in prefix:
+            after = prefix.split("/.claude/plugins/marketplaces/", 1)[1]
+            segments = [s for s in after.split("/") if s and s != "skills"]
+            for seg in reversed(segments):
+                if seg in _PLUGIN_PATH_NOISE or _VERSION_RE.match(seg):
+                    continue
+                result = f"{seg}:{bare}"
+                return result if result in known_skills else None
+            return None
         for known in known_skills:
             if ":" not in known:
                 continue
@@ -219,15 +230,26 @@ def _gather_user_dir_skills(roots: list[Path], scope: str) -> dict[str, Discover
 
 
 def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
+    """Discover plugin skills from the marketplace directory only.
+
+    Skips the cache (``cache/``) entirely — the marketplace is the source of
+    truth and scanning cache caused duplicate entries under SHA-based names.
+    """
     found: dict[str, DiscoveredSkill] = {}
     if not plugins_root.exists():
         return found
-    for skill_file in plugins_root.glob("**/skills/*/SKILL.md"):
+    marketplaces = plugins_root / "marketplaces"
+    if not marketplaces.exists():
+        return found
+    for skill_file in marketplaces.glob("**/skills/*/SKILL.md"):
         parts = skill_file.parts
         try:
             skills_idx = max(i for i, p in enumerate(parts[:-1]) if p == "skills")
         except ValueError:
             continue
+        skill_name = parts[skills_idx + 1]
+        # Walk backwards from skills/ to find the plugin/marketplace name,
+        # skipping noise dirs and version segments.
         plugin_name: str | None = None
         for i in range(skills_idx - 1, 0, -1):
             seg = parts[i]
@@ -237,7 +259,6 @@ def _gather_plugin_skills(plugins_root: Path) -> dict[str, DiscoveredSkill]:
             break
         if not plugin_name:
             continue
-        skill_name = parts[skills_idx + 1]
         full_name = f"{plugin_name}:{skill_name}"
         entry = found.setdefault(
             full_name, DiscoveredSkill(full_name, [], SCOPE_PLUGIN, removable=False)

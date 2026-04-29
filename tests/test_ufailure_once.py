@@ -489,7 +489,7 @@ def test_discover_skills_skips_project_when_same_as_home(tmp_path):
 
 
 def test_discover_skills_finds_plugin_skills_with_namespaced_names(tmp_path):
-    plugin_path = tmp_path / ".claude" / "plugins" / "cache" / "marketplace" / "superpowers" / "5.0.6" / "skills" / "brainstorming"
+    plugin_path = tmp_path / ".claude" / "plugins" / "marketplaces" / "superpowers" / "skills" / "brainstorming"
     plugin_path.mkdir(parents=True)
     (plugin_path / "SKILL.md").write_text("# b\n", encoding="utf-8")
 
