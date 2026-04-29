@@ -170,3 +170,6 @@ This section is for Codex and Claude Code agents after the user pastes the promp
 8. **Delete `/tmp/ufailure_once.py`.** This step is mandatory — the one-shot promise depends on it.
 9. Report removed skills, skipped skills, and reasons for anything not removed. Show the script's `✓ Removed: <path>` lines verbatim.
 10. Keep the user-facing interaction minimal: show the ranked table from the script, wait for the reply, run the dry-run/confirm pair, show the result, delete the script, done.
+
+## 🙏 Acknowledgements
+This project has been published on the [LINUX DO community](https://linux.do/), and we deeply appreciate the community's support and feedback.
