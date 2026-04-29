@@ -423,8 +423,8 @@ def build_report_rows(
     paths_by_skill: dict[str, list[Path]] | None = None,
     skill_scopes: dict[str, str] | None = None,
     removable_skills: set[str] | None = None,
-) -> list[dict[str, object]]:
-    rows: list[dict[str, object]] = []
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     total_uses = sum(entry.uses for entry in usage.values())
     has_path_inventory = paths_by_skill is not None
     paths_by_skill = paths_by_skill or {}
@@ -513,7 +513,7 @@ SECTION_TITLES: tuple[tuple[str, str, str], ...] = (
 
 
 def _format_skill_row(
-    row: dict[str, object],
+    row: dict[str, Any],
     max_uses: int,
     now: datetime,
     glyphs: Glyphs,
@@ -531,7 +531,7 @@ def _format_skill_row(
 
 
 def print_text_report(
-    rows: list[dict[str, object]],
+    rows: list[dict[str, Any]],
     since_days: int,
     glyphs: Glyphs = RICH_GLYPHS,
     show_all: bool = True,  # kept for backwards compatibility; no longer gates anything
@@ -549,7 +549,7 @@ def print_text_report(
     name_width = 32
     cand_name_width = name_width - 5  # leave 5 chars for "[N]  "
 
-    by_scope: dict[str, list[dict[str, object]]] = {
+    by_scope: dict[str, list[dict[str, Any]]] = {
         SCOPE_USER: [],
         SCOPE_PROJECT: [],
         SCOPE_PLUGIN: [],
