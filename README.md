@@ -99,7 +99,7 @@ Each skill belongs to exactly one scope. The report lists every skill under its 
 | **Project skills** | `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/`               | yes                          |
 | **Plugin skills**  | `~/.claude/plugins/.../<plugin>/.../skills/<name>/`, named `<plugin>:<skill>` | no — manage via `/plugin` |
 
-Plugin skills are shown in full (used and unused) so their usage counts are visible alongside the global / project skills you might want to clean up. They are never deletion candidates and never get an `[N]` selector. Failure Skills carry a `(scope)` tag so selection stays unambiguous when the same name lives in multiple scopes.
+Plugin skills are shown in full (used and unused) so their usage counts are visible alongside the global / project skills you might want to clean up. They are never deletion candidates and never get an `[N]` selector. A removable skill is offered in Failure Skills only when its name resolves to exactly one directory; same-name duplicates across removable locations stay in the inventory with a path-count warning and must be cleaned up manually.
 
 The `Share` column shows each skill's percentage of total visible usage in the scanned window. Bars are normalized against the highest-use skill in the run. `.` (or `·` in rich mode) marks zero uses.
 
@@ -114,13 +114,14 @@ Logs and skill manifests, all read-only:
 - `~/.claude/projects/**/*.jsonl`
 - `~/.codex/skills/*/SKILL.md`
 - `~/.claude/skills/*/SKILL.md`
-- `~/.claude/plugins/**/skills/*/SKILL.md`
+- `~/.claude/plugins/installed_plugins.json`
+- `~/.claude/plugins/marketplaces/**/skills/*/SKILL.md` for installed plugin inventory
 - `<cwd>/.codex/skills/*/SKILL.md` and `<cwd>/.claude/skills/*/SKILL.md`
 
 Both Codex and Claude Code sessions are scanned. They invoke skills differently, so we count usage from four signals across all transcripts:
 
 1. **Claude Code structured invocations** — `tool_use` nodes with `name: "Skill"` and `input.skill: "<name>"`. Plugin namespacing (e.g. `superpowers:executing-plans`) is preserved so each plugin skill counts against its own row.
-2. **Codex SKILL.md path mentions** — Codex Desktop activates skills by `cat`-ing the SKILL.md path through `exec_command`. Any `/skills/<name>/SKILL.md` substring in a transcript is matched and resolved to the right scope (bare name for user/project paths, namespaced `<plugin>:<name>` for paths under `/plugins/`).
+2. **Codex SKILL.md path mentions** — Codex Desktop activates skills by `cat`-ing the SKILL.md path through `exec_command`. Any `/skills/<name>/SKILL.md` substring in a transcript is matched and resolved to the right scope (bare name for user/project paths, namespaced `<plugin>:<name>` for installed plugin paths). Cache path mentions in historical transcripts are recognized against installed plugin names but cache directories are not scanned as inventory.
 3. **Slash commands at the start of a string node** (e.g. `/writer draft this`).
 4. **Natural-language mentions** like `Using <skill> skill` and `[<skill>](.../SKILL.md)` Markdown links.
 
@@ -136,7 +137,7 @@ Only explicitly selected user skills under:
 - `~/.claude/skills/<name>/`
 - `<cwd>/.codex/skills/<name>/` or `<cwd>/.claude/skills/<name>/` (when run from inside a project)
 
-It does not remove system skills, plugin-installed skills, or arbitrary paths. Names containing `:` (the namespaced plugin form) short-circuit removal even if such a directory somehow exists. Every removal is preceded by a dry-run that prints the exact path; only after the dry-run passes does `--confirm` actually call `shutil.rmtree`.
+It does not remove system skills, plugin-installed skills, arbitrary paths, or a skill name that resolves to more than one removable directory. Names containing `:` (the namespaced plugin form) short-circuit removal even if such a directory somehow exists. Every removal is preceded by a dry-run that prints the exact path; only after the dry-run passes does `--confirm` actually call `shutil.rmtree`.
 
 ---
 
@@ -162,7 +163,7 @@ This section is for Codex and Claude Code agents after the user pastes the promp
    ```bash
    python3 /tmp/ufailure_once.py remove <skill-name> --dry-run
    ```
-7. Only if every dry-run path is under a removable scope (`~/.codex/skills/<name>`, `~/.claude/skills/<name>`, or the project-local equivalents), run:
+7. Only if the dry-run returns exactly one path under a removable scope (`~/.codex/skills/<name>`, `~/.claude/skills/<name>`, or the project-local equivalents), run:
 
    ```bash
    python3 /tmp/ufailure_once.py remove <skill-name> --confirm
